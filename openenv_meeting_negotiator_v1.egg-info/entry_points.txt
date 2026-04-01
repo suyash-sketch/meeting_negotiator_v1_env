@@ -1,0 +1,2 @@
+[console_scripts]
+server = meeting_negotiator_v1.server.app:main
