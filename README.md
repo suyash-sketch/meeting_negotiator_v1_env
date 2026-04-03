@@ -1,6 +1,6 @@
 ---
 title: Meeting Negotiator V1 Environment Server
-emoji: ":clock3:"
+emoji: "⌚"
 colorFrom: red
 colorTo: indigo
 sdk: docker
