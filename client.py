@@ -24,75 +24,37 @@ class MeetingNegotiatorV1Env(
     This client maintains a persistent WebSocket connection to the environment server,
     enabling efficient multi-step interactions with lower latency.
     Each client instance has its own dedicated environment session on the server.
-
-    Example:
-        >>> # Connect to a running server
-        >>> with MeetingNegotiatorV1Env(base_url="http://localhost:8000") as client:
-        ...     result = client.reset()
-        ...     print(result.observation.echoed_message)
-        ...
-        ...     result = client.step(MeetingNegotiatorV1Action(message="Hello!"))
-        ...     print(result.observation.echoed_message)
-
-    Example with Docker:
-        >>> # Automatically start container and connect
-        >>> client = MeetingNegotiatorV1Env.from_docker_image("meeting_negotiator_v1-env:latest")
-        >>> try:
-        ...     result = client.reset()
-        ...     result = client.step(MeetingNegotiatorV1Action(message="Test"))
-        ... finally:
-        ...     client.close()
     """
 
     def _step_payload(self, action: MeetingNegotiatorV1Action) -> Dict:
-        """
-        Convert MeetingNegotiatorV1Action to JSON payload for step message.
-
-        Args:
-            action: MeetingNegotiatorV1Action instance
-
-        Returns:
-            Dictionary representation suitable for JSON encoding
-        """
         return {
-            "message": action.message,
+            "command": action.command,
+            "target_id": action.target_id,
+            "proposed_start_utc": action.proposed_start_utc,
         }
 
     def _parse_result(self, payload: Dict) -> StepResult[MeetingNegotiatorV1Observation]:
-        """
-        Parse server response into StepResult[MeetingNegotiatorV1Observation].
-
-        Args:
-            payload: JSON response data from server
-
-        Returns:
-            StepResult with MeetingNegotiatorV1Observation
-        """
         obs_data = payload.get("observation", {})
         observation = MeetingNegotiatorV1Observation(
-            echoed_message=obs_data.get("echoed_message", ""),
-            message_length=obs_data.get("message_length", 0),
-            done=payload.get("done", False),
-            reward=payload.get("reward"),
-            metadata=obs_data.get("metadata", {}),
+            current_time_utc=obs_data.get("current_time_utc", ""),
+            participants=obs_data.get("participants", {}),
+            calendar_state=obs_data.get("calendar_state", []),
+            pending_requests=obs_data.get("pending_requests", []),
+            last_action_feedback=obs_data.get("last_action_feedback", ""),
+            turn_count=obs_data.get("turn_count", 0),
+            max_turns=obs_data.get("max_turns", 0),
+            score=obs_data.get("score"),
+            reward=obs_data.get("reward", payload.get("reward", 0.0)),
+            done=obs_data.get("done", payload.get("done", False)),
         )
 
         return StepResult(
             observation=observation,
-            reward=payload.get("reward"),
-            done=payload.get("done", False),
+            reward=payload.get("reward", observation.reward),
+            done=payload.get("done", observation.done),
         )
 
     def _parse_state(self, payload: Dict) -> State:
-        """
-        Parse server response into State object.
-
-        Args:
-            payload: JSON response from state request
-
-        Returns:
-            State object with episode_id and step_count
-        """
         return State(
             episode_id=payload.get("episode_id"),
             step_count=payload.get("step_count", 0),
