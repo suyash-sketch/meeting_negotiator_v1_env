@@ -162,8 +162,8 @@ class MeetingNegotiatorV1Environment(Environment):
             key = scenario_id.strip().upper()
             if key in scenarios:
                 return scenarios[key]
-        # order = ["EASY", "MEDIUM", "HARD"]
-        order = ["HARD", "MEDIUM", "EASY"]
+        order = ["EASY", "MEDIUM", "HARD"]
+        # order = ["HARD", "MEDIUM", "EASY"]
         index = (reset_count - 1) % len(order)
         return scenarios[order[index]]
 
