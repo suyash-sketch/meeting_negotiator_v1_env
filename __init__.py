@@ -7,10 +7,21 @@
 """Meeting Negotiator V1 Environment."""
 
 from .client import MeetingNegotiatorV1Env
-from .models import MeetingNegotiatorV1Action, MeetingNegotiatorV1Observation
+from .models import (
+    MeetingNegotiatorV1Action,
+    MeetingNegotiatorV1Observation,
+    MeetingNegotiatorV1State,
+    Participant,
+    MeetingRequest,
+    ScheduledEvent,
+)
 
 __all__ = [
     "MeetingNegotiatorV1Action",
     "MeetingNegotiatorV1Observation",
+    "MeetingNegotiatorV1State",
+    "Participant",
+    "MeetingRequest",
+    "ScheduledEvent",
     "MeetingNegotiatorV1Env",
 ]
