@@ -43,6 +43,7 @@ PRIORITY_ORDER = {"low": 0, "medium": 1, "high": 2, "urgent": 3}
 STEP_PENALTY = 0.01
 INVALID_ACTION_PENALTY = 0.05
 CONFLICT_ACTION_PENALTY = 0.05
+PREFERENCE_PENALTY_PER_ATTENDEE = 0.01
 
 SCORE_PENALTIES = {
     "unscheduled": 0.40,
@@ -81,9 +82,9 @@ class MeetingNegotiatorV1Environment(Environment):
         self._state = MeetingNegotiatorV1State()
         self._reset_count = 0
 
-    def reset(self) -> MeetingNegotiatorV1Observation:
+    def reset(self, scenario_id: Optional[str] = None) -> MeetingNegotiatorV1Observation:
         self._reset_count += 1
-        scenario = self._select_scenario(self._reset_count)
+        scenario = self._select_scenario(self._reset_count, scenario_id)
 
         self._state = MeetingNegotiatorV1State(
             episode_id=str(uuid4()),
@@ -108,7 +109,6 @@ class MeetingNegotiatorV1Environment(Environment):
         if self._state.is_done:
             return self._build_observation(reward=0.0, done=True)
 
-        self._state.step_count += 1
         self._state.turn_count += 1
 
         reward = -STEP_PENALTY
@@ -152,10 +152,20 @@ class MeetingNegotiatorV1Environment(Environment):
 
     # Scenario setup
 
-    def _select_scenario(self, reset_count: int) -> ScenarioSpec:
-        scenarios = [self._scenario_easy(), self._scenario_medium(), self._scenario_hard()]
-        index = (reset_count - 1) % len(scenarios)
-        return scenarios[index]
+    def _select_scenario(self, reset_count: int, scenario_id: Optional[str]) -> ScenarioSpec:
+        scenarios = {
+            "EASY": self._scenario_easy(),
+            "MEDIUM": self._scenario_medium(),
+            "HARD": self._scenario_hard(),
+        }
+        if scenario_id:
+            key = scenario_id.strip().upper()
+            if key in scenarios:
+                return scenarios[key]
+        # order = ["EASY", "MEDIUM", "HARD"]
+        order = ["HARD", "MEDIUM", "EASY"]
+        index = (reset_count - 1) % len(order)
+        return scenarios[order[index]]
 
     def _scenario_easy(self) -> ScenarioSpec:
         participants = {
@@ -177,13 +187,13 @@ class MeetingNegotiatorV1Environment(Environment):
             attendees=["Alice", "Bob"],
             duration_minutes=60,
             priority="medium",
-            deadline_utc="2026-04-01T17:00Z",
+            deadline_utc="2026-01-15T17:00Z",
             title="1:1 Alice/Bob",
         )
         return ScenarioSpec(
             scenario_id="EASY",
             description="The Empty Slate",
-            current_time_utc="2026-04-01T08:00Z",
+            current_time_utc="2026-01-15T08:00Z",
             participants=participants,
             calendar_state=[],
             pending_requests=[request],
@@ -217,42 +227,42 @@ class MeetingNegotiatorV1Environment(Environment):
             ScheduledEvent(
                 event_id="EVT-PAT-1",
                 attendees=["Pat"],
-                start_time_utc="2026-04-01T17:45Z",
+                start_time_utc="2026-01-15T17:45Z",
                 duration_minutes=195,  # 17:45 -> 21:00
                 priority="medium",
             ),
             ScheduledEvent(
                 event_id="EVT-PAT-2",
                 attendees=["Pat"],
-                start_time_utc="2026-04-01T21:30Z",
+                start_time_utc="2026-01-15T21:30Z",
                 duration_minutes=210,  # 21:30 -> 01:00 next day
                 priority="medium",
             ),
             ScheduledEvent(
                 event_id="EVT-EVE-1",
                 attendees=["Eve"],
-                start_time_utc="2026-04-01T14:00Z",
+                start_time_utc="2026-01-15T14:00Z",
                 duration_minutes=180,  # 14:00 -> 17:00
                 priority="medium",
             ),
             ScheduledEvent(
                 event_id="EVT-EVE-2",
                 attendees=["Eve"],
-                start_time_utc="2026-04-01T17:45Z",
+                start_time_utc="2026-01-15T17:45Z",
                 duration_minutes=255,  # 17:45 -> 22:00
                 priority="medium",
             ),
             ScheduledEvent(
                 event_id="EVT-GINA-1",
                 attendees=["Gina"],
-                start_time_utc="2026-04-01T09:00Z",
+                start_time_utc="2026-01-15T09:00Z",
                 duration_minutes=480,  # 09:00 -> 17:00
                 priority="medium",
             ),
             ScheduledEvent(
                 event_id="EVT-GINA-2",
                 attendees=["Gina"],
-                start_time_utc="2026-04-01T17:45Z",
+                start_time_utc="2026-01-15T17:45Z",
                 duration_minutes=15,  # 17:45 -> 18:00
                 priority="medium",
             ),
@@ -262,13 +272,13 @@ class MeetingNegotiatorV1Environment(Environment):
             attendees=["Pat", "Eve", "Gina"],
             duration_minutes=45,
             priority="high",
-            deadline_utc="2026-04-01T18:00Z",
+            deadline_utc="2026-01-15T18:00Z",
             title="Cross-timezone team sync",
         )
         return ScenarioSpec(
             scenario_id="MEDIUM",
             description="The Timezone Jigsaw",
-            current_time_utc="2026-04-01T08:00Z",
+            current_time_utc="2026-01-15T08:00Z",
             participants=participants,
             calendar_state=calendar_state,
             pending_requests=[request],
@@ -302,77 +312,93 @@ class MeetingNegotiatorV1Environment(Environment):
             attendees=["Alice", "Intern"],
             duration_minutes=30,
             priority="low",
-            deadline_utc="2026-04-01T17:00Z",
+            deadline_utc="2026-01-15T17:00Z",
             title="Internal team sync",
+        )
+        very_low_request = MeetingRequest(
+            request_id="REQ-HARD-VERY-LOW-1",
+            attendees=["Intern"],
+            duration_minutes=30,
+            priority="low",
+            deadline_utc="2026-01-15T16:30Z",
+            title="Very low priority admin",
         )
         urgent_request = MeetingRequest(
             request_id="REQ-HARD-URGENT-1",
             attendees=["CEO", "Alice"],
             duration_minutes=30,
             priority="urgent",
-            deadline_utc="2026-04-01T16:00Z",
+            deadline_utc="2026-01-15T16:00Z",
             title="URGENT CEO sync",
         )
         calendar_state = [
             ScheduledEvent(
                 event_id="EVT-CEO-1",
                 attendees=["CEO"],
-                start_time_utc="2026-04-01T14:00Z",
+                start_time_utc="2026-01-15T14:00Z",
                 duration_minutes=60,
                 priority="high",
             ),
             ScheduledEvent(
                 event_id="EVT-CEO-2",
                 attendees=["CEO"],
-                start_time_utc="2026-04-01T15:30Z",
+                start_time_utc="2026-01-15T15:30Z",
                 duration_minutes=390,  # 15:30 -> 22:00
                 priority="high",
             ),
             ScheduledEvent(
                 event_id="EVT-ALICE-1",
                 attendees=["Alice"],
-                start_time_utc="2026-04-01T14:00Z",
+                start_time_utc="2026-01-15T14:00Z",
                 duration_minutes=60,
                 priority="medium",
             ),
             ScheduledEvent(
                 event_id="EVT-ALICE-2",
                 attendees=["Alice"],
-                start_time_utc="2026-04-01T16:00Z",
+                start_time_utc="2026-01-15T16:00Z",
                 duration_minutes=360,  # 16:00 -> 22:00
                 priority="medium",
             ),
             ScheduledEvent(
                 event_id="EVT-INTERN-1",
                 attendees=["Intern"],
-                start_time_utc="2026-04-01T14:00Z",
+                start_time_utc="2026-01-15T14:00Z",
                 duration_minutes=60,
                 priority="medium",
             ),
             ScheduledEvent(
                 event_id="EVT-INTERN-2",
                 attendees=["Intern"],
-                start_time_utc="2026-04-01T16:00Z",
+                start_time_utc="2026-01-15T16:00Z",
                 duration_minutes=360,  # 16:00 -> 22:00
                 priority="medium",
             ),
             ScheduledEvent(
                 event_id="EVT-LOW-1",
                 attendees=["Alice", "Intern"],
-                start_time_utc="2026-04-01T15:00Z",
+                start_time_utc="2026-01-15T15:00Z",
                 duration_minutes=30,
                 priority="low",
                 request_id=low_priority_request.request_id,
+            ),
+            ScheduledEvent(
+                event_id="EVT-VERY-LOW-1",
+                attendees=["Intern"],
+                start_time_utc="2026-01-15T15:30Z",
+                duration_minutes=30,
+                priority="low",
+                request_id=very_low_request.request_id,
             ),
         ]
         return ScenarioSpec(
             scenario_id="HARD",
             description="Priority Cascade (The Clever Mechanic)",
-            current_time_utc="2026-04-01T08:00Z",
+            current_time_utc="2026-01-15T08:00Z",
             participants=participants,
             calendar_state=calendar_state,
             pending_requests=[urgent_request],
-            all_requests=[urgent_request, low_priority_request],
+            all_requests=[urgent_request, low_priority_request, very_low_request],
             max_turns=15,
         )
 
@@ -438,6 +464,10 @@ class MeetingNegotiatorV1Environment(Environment):
         self._state.pending_requests = [r for r in self._state.pending_requests if r.request_id != request.request_id]
 
         feedback = f"Scheduled {request.request_id} at {new_event.start_time_utc}."
+        pref_violations = self._preference_violations(request.attendees, start_dt, end_dt)
+        if pref_violations:
+            reward -= PREFERENCE_PENALTY_PER_ATTENDEE * len(pref_violations)
+            feedback += f" Outside preferred hours: {', '.join(pref_violations)}."
         if bumped:
             feedback += f" Bumped lower-priority events: {', '.join(bumped)}."
         return reward, feedback
@@ -479,6 +509,10 @@ class MeetingNegotiatorV1Environment(Environment):
         event.start_time_utc = self._format_utc(start_dt)
 
         feedback = f"Rescheduled {event.event_id} to {event.start_time_utc}."
+        pref_violations = self._preference_violations(event.attendees, start_dt, end_dt)
+        if pref_violations:
+            reward -= PREFERENCE_PENALTY_PER_ATTENDEE * len(pref_violations)
+            feedback += f" Outside preferred hours: {', '.join(pref_violations)}."
         if bumped:
             feedback += f" Bumped lower-priority events: {', '.join(bumped)}."
         return reward, feedback
@@ -505,8 +539,11 @@ class MeetingNegotiatorV1Environment(Environment):
             if participant is None:
                 issues.append(f"unknown attendee {attendee}")
                 continue
-            if not self._within_working_hours(participant, start_dt, end_dt):
-                issues.append(f"{attendee} outside working hours")
+            try:
+                if not self._within_working_hours(participant, start_dt, end_dt):
+                    issues.append(f"{attendee} outside working hours")
+            except ValueError as exc:
+                issues.append(str(exc))
 
         conflicts = self._find_conflicts(request.attendees, start_dt, end_dt, ignore_event_id)
 
@@ -595,7 +632,10 @@ class MeetingNegotiatorV1Environment(Environment):
                 if participant is None:
                     penalty += SCORE_PENALTIES["working_hours"]
                     continue
-                if not self._within_working_hours(participant, start_dt, end_dt):
+                try:
+                    if not self._within_working_hours(participant, start_dt, end_dt):
+                        penalty += SCORE_PENALTIES["working_hours"]
+                except ValueError:
                     penalty += SCORE_PENALTIES["working_hours"]
                 if participant.preferred_hours:
                     if not self._within_preferred_hours(participant, start_dt, end_dt):
@@ -654,7 +694,19 @@ class MeetingNegotiatorV1Environment(Environment):
             else:
                 offset = timedelta(hours=sign * int(raw))
             return timezone(offset)
-        return timezone.utc
+        raise ValueError(f"unknown timezone {tz}")
+
+    def _preference_violations(
+        self, attendees: List[str], start_dt: datetime, end_dt: datetime
+    ) -> List[str]:
+        violations: List[str] = []
+        for attendee in attendees:
+            participant = self._state.participants.get(attendee)
+            if participant is None:
+                continue
+            if participant.preferred_hours and not self._within_preferred_hours(participant, start_dt, end_dt):
+                violations.append(attendee)
+        return violations
 
     def _within_working_hours(self, participant: Participant, start_dt: datetime, end_dt: datetime) -> bool:
         tz = self._tz_offset(participant.timezone)
@@ -665,27 +717,33 @@ class MeetingNegotiatorV1Environment(Environment):
     def _within_preferred_hours(self, participant: Participant, start_dt: datetime, end_dt: datetime) -> bool:
         if not participant.preferred_hours:
             return True
-        tz = self._tz_offset(participant.timezone)
+        try:
+            tz = self._tz_offset(participant.timezone)
+        except ValueError:
+            return False
         local_start = start_dt.astimezone(tz)
         local_end = end_dt.astimezone(tz)
         return self._within_blocks(local_start, local_end, participant.preferred_hours)
 
     def _within_blocks(self, local_start: datetime, local_end: datetime, blocks: List[str]) -> bool:
-        for block in blocks:
-            try:
-                start_str, end_str = block.split("-")
-                start_time = self._parse_time(start_str)
-                end_time = self._parse_time(end_str)
-            except ValueError:
-                continue
+        days_span = (local_end.date() - local_start.date()).days
+        for day_offset in range(days_span + 1):
+            day = local_start.date() + timedelta(days=day_offset)
+            for block in blocks:
+                try:
+                    start_str, end_str = block.split("-")
+                    start_time = self._parse_time(start_str)
+                    end_time = self._parse_time(end_str)
+                except ValueError:
+                    continue
 
-            block_start = datetime.combine(local_start.date(), start_time, tzinfo=local_start.tzinfo)
-            block_end = datetime.combine(local_start.date(), end_time, tzinfo=local_start.tzinfo)
-            if block_end <= block_start:
-                block_end += timedelta(days=1)
+                block_start = datetime.combine(day, start_time, tzinfo=local_start.tzinfo)
+                block_end = datetime.combine(day, end_time, tzinfo=local_start.tzinfo)
+                if block_end <= block_start:
+                    block_end += timedelta(days=1)
 
-            if local_start >= block_start and local_end <= block_end:
-                return True
+                if local_start >= block_start and local_end <= block_end:
+                    return True
         return False
 
     def _parse_time(self, value: str) -> time:
