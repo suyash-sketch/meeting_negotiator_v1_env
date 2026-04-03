@@ -10,12 +10,12 @@ MANDATORY
 - The inference script must be named `inference.py` and placed in the root directory of the project
 - Participants must use OpenAI Client for all LLM calls using above variables
 """
-
+import re
 import asyncio
 import json
 import os
 from datetime import datetime, timedelta, timezone, time
-from typing import Optional, List, Dict, Tuple
+from typing import Optional, List, Dict
 
 from openai import AsyncOpenAI
 from dotenv import load_dotenv
@@ -35,7 +35,12 @@ llm_client = AsyncOpenAI(
 
 USE_FALLBACK = os.getenv("USE_FALLBACK", "").strip().lower() in {"1", "true", "yes"}
 USE_FALLBACK = USE_FALLBACK or not (API_BASE_URL and MODEL_NAME and API_KEY)
+MAX_RETRIES = 3
 
+
+# ============================================================================
+# UTILITIES & FALLBACK SOLVER
+# ============================================================================
 
 def _sanitize_command(raw: str) -> str:
     raw = (raw or "").strip().lower()
@@ -77,13 +82,8 @@ def _tz_offset(tz: str) -> timezone:
         raw = tz[3:]
         if not raw:
             return timezone.utc
-        sign = 1
-        if raw[0] == "+":
-            sign = 1
-            raw = raw[1:]
-        elif raw[0] == "-":
-            sign = -1
-            raw = raw[1:]
+        sign = 1 if raw[0] == "+" else -1
+        raw = raw[1:] if raw[0] in "+-" else raw
         if ":" in raw:
             hours, minutes = raw.split(":", 1)
             offset = timedelta(hours=sign * int(hours), minutes=sign * int(minutes))
@@ -111,12 +111,9 @@ def _within_blocks(local_start: datetime, local_end: datetime, blocks: List[str]
 
 
 def _participant_dict(participant) -> Dict:
-    if hasattr(participant, "model_dump"):
-        return participant.model_dump()
-    if hasattr(participant, "dict"):
-        return participant.dict()
-    if isinstance(participant, dict):
-        return participant
+    if hasattr(participant, "model_dump"): return participant.model_dump()
+    if hasattr(participant, "dict"): return participant.dict()
+    if isinstance(participant, dict): return participant
     return {}
 
 
@@ -140,7 +137,7 @@ def _find_conflicts(calendar_state: List[Dict], attendees: List[str], start_dt: 
     return conflicts
 
 
-def _candidate_slots(obs: "MeetingNegotiatorV1Observation", request: Dict) -> List[str]:
+def _candidate_slots(obs, request: Dict) -> List[str]:
     start_dt = _parse_utc(obs.current_time_utc)
     deadline = _parse_utc(request.get("deadline_utc"))
     duration = int(request.get("duration_minutes", 30))
@@ -160,7 +157,7 @@ def _candidate_slots(obs: "MeetingNegotiatorV1Observation", request: Dict) -> Li
     return slots
 
 
-def _fallback_action(obs: "MeetingNegotiatorV1Observation") -> MeetingNegotiatorV1Action:
+def _fallback_action(obs) -> MeetingNegotiatorV1Action:
     if not obs.pending_requests:
         return MeetingNegotiatorV1Action(command="SubmitFinalCalendar")
 
@@ -180,70 +177,141 @@ def _fallback_action(obs: "MeetingNegotiatorV1Observation") -> MeetingNegotiator
             end_dt,
         )
         if not conflicts:
-            return MeetingNegotiatorV1Action(
-                command="ScheduleNew",
-                target_id=request_id,
-                proposed_start_utc=slot,
-            )
+            return MeetingNegotiatorV1Action(command="ScheduleNew", target_id=request_id, proposed_start_utc=slot)
 
-    # If all slots conflict, try scheduling anyway at first candidate to trigger bumping.
-    return MeetingNegotiatorV1Action(
-        command="ScheduleNew",
-        target_id=request_id,
-        proposed_start_utc=candidates[0],
-    )
+    return MeetingNegotiatorV1Action(command="ScheduleNew", target_id=request_id, proposed_start_utc=candidates[0])
 
+
+# ============================================================================
+# LLM AGENT LOGIC
+# ============================================================================
+
+def _obs_to_prompt(obs, action_history: List[str]) -> str:
+    """Serialize observation to clean JSON strings and inject history."""
+    def _ser(obj):
+        if hasattr(obj, "model_dump"): return obj.model_dump()
+        if isinstance(obj, list): return [_ser(i) for i in obj]
+        if isinstance(obj, dict): return {k: _ser(v) for k, v in obj.items()}
+        return obj
+
+    participants = json.dumps(_ser(obs.participants), indent=2)
+    calendar     = json.dumps(_ser(obs.calendar_state), indent=2)
+    pending      = json.dumps(_ser(obs.pending_requests), indent=2)
+    history_str  = "\n".join(action_history) if action_history else "No previous actions taken."
+
+    return f"""You are a strict meeting scheduling AI.
+Goal: Schedule all pending requests while respecting constraints.
+
+Current time (UTC): {obs.current_time_utc}
+Turn: {obs.turn_count} / {obs.max_turns}
+Last feedback: {obs.last_action_feedback}
+
+ACTION HISTORY (Your past moves):
+{history_str}
+
+PARTICIPANTS:
+{participants}
+
+CALENDAR (already booked — do not double-book these):
+{calendar}
+
+PENDING REQUESTS (you must schedule all of these):
+{pending}
+
+RULES:
+1. THE BUMP MECHANIC (CRITICAL): If a slot is blocked by a lower-priority meeting, DO NOT manually use RescheduleExisting on the blocker. Instead, directly use ScheduleNew for your higher-priority meeting in that slot. The system will automatically bump the blocker into your Pending Requests for you to handle later.
+2. If Last Feedback says "Slot available", DO NOT check it again. Schedule it immediately.
+3. Call SubmitFinalCalendar only when 'Pending requests' is empty.
+4. All times must be UTC in format "YYYY-MM-DDTHH:MMZ".
+5. ScheduleNew and RescheduleExisting MUST have a valid target_id.
+
+You MUST respond with ONLY a valid JSON object. No markdown, no explanations, no code blocks.
+Format required:
+{{"command": "CheckAvailability|ScheduleNew|RescheduleExisting|SubmitFinalCalendar", "target_id": "<id or null>", "proposed_start_utc": "<YYYY-MM-DDTHH:MMZ or null>"}}"""
+
+
+async def call_llm_with_retry(prompt: str) -> dict:
+    """
+    Call the LLM with up to MAX_RETRIES attempts.
+    Optimized for highly chatty open-source / Hugging Face endpoints.
+    """
+    last_error = None
+
+    for attempt in range(MAX_RETRIES):
+        try:
+            kwargs = {
+                "model": MODEL_NAME,
+                "messages": [
+                    {
+                        "role": "system",
+                        # AGGRESSIVE JSON PROMPT:
+                        "content": "You are a JSON-only API. You do not speak English. You speak ONLY JSON. Never provide explanations, preambles, or thoughts. Begin your response directly with '{' and end with '}'."
+                    },
+                    {"role": "user", "content": prompt}
+                ],
+                # Bumped to 1024 so if it DOES ramble, the JSON doesn't get cut off
+                # "max_tokens": 1024,  
+                "temperature": 0.0,  
+            }
+
+            response = await llm_client.chat.completions.create(**kwargs)
+            raw = (response.choices[0].message.content or "").strip()
+
+            if not raw:
+                raise ValueError("API returned an empty string.")
+
+            # Bulletproof Regex Extraction (Even if it rambles first)
+            match = re.search(r'\{.*\}', raw, re.DOTALL)
+            if match:
+                raw = match.group(0)
+
+            return json.loads(raw)
+
+        except json.JSONDecodeError as e:
+            last_error = e
+            preview = raw[:80].replace("\n", " ") if 'raw' in locals() else "None"
+            print(f"  [WARN] attempt {attempt + 1}: JSON parse failed — {e} | Raw: {preview}...")
+            await asyncio.sleep(2)
+
+        except Exception as e:
+            last_error = e
+            err_str = str(e).lower()
+            if "429" in err_str or "rate" in err_str:
+                wait = 5 * (attempt + 1)
+                print(f"  [WARN] attempt {attempt + 1}: rate limited, waiting {wait}s")
+                await asyncio.sleep(wait)
+            else:
+                print(f"  [WARN] attempt {attempt + 1}: API Error — {e}")
+                await asyncio.sleep(2)
+
+    print(f"  [ERROR] all {MAX_RETRIES} attempts failed: {last_error} — using safe default")
+    return {"command": "SubmitFinalCalendar", "target_id": None, "proposed_start_utc": None}
+
+# ============================================================================
+# MAIN EPISODE LOOP
+# ============================================================================
 
 async def run_episode(env: MeetingNegotiatorV1Env, episode_label: str):
-    result = await env.reset()
+    result = await env.reset(scenario_id=episode_label)
     obs = result.observation
     done = result.done
 
     print(f"\n--- Starting Episode: {episode_label} ---")
     print(obs.last_action_feedback)
 
+    action_history = [] 
+
     while not done:
         if USE_FALLBACK:
             action = _fallback_action(obs)
         else:
-            prompt = f"""
-You are a meeting scheduling agent.
+            # 1. Generate Prompt
+            prompt = _obs_to_prompt(obs, action_history)
+            
+            # 2. Call LLM
+            parsed = await call_llm_with_retry(prompt)
 
-Goal: schedule all pending requests while respecting time zones, working hours, priorities, and deadlines.
-You must operate in multiple steps (check, propose, adjust, reschedule, finalize) and then submit.
-
-Current time (UTC): {obs.current_time_utc}
-Participants: {obs.participants}
-Calendar: {obs.calendar_state}
-Pending requests: {obs.pending_requests}
-Last feedback: {obs.last_action_feedback}
-Turn: {obs.turn_count} / {obs.max_turns}
-
-Respond ONLY with valid JSON in this format:
-{{"command": "CheckAvailability|ScheduleNew|RescheduleExisting|SubmitFinalCalendar", "target_id": "...", "proposed_start_utc": "YYYY-MM-DDTHH:MMZ"}}
-- For SubmitFinalCalendar, omit target_id and proposed_start_utc or set them to null.
-- For ScheduleNew, target_id must be a pending request_id.
-- For RescheduleExisting, target_id must be an event_id from calendar_state.
-""".strip()
-
-            try:
-                response = await llm_client.chat.completions.create(
-                    model=MODEL_NAME,
-                    messages=[{"role": "user", "content": prompt}],
-                    response_format={"type": "json_object"},
-                    extra_body={"reasoning" : {"enabled" : True}}
-                )
-
-                raw_content = response.choices[0].message.content.strip()
-                if raw_content.startswith("```json"):
-                    raw_content = raw_content.replace("```json", "").replace("```", "").strip()
-                elif raw_content.startswith("```"):
-                    raw_content = raw_content.replace("```", "").strip()
-
-                parsed = json.loads(raw_content)
-            except json.JSONDecodeError:
-                parsed = {"command": "SubmitFinalCalendar"}
-
+            # 3. Parse output safely
             command = _sanitize_command(parsed.get("command"))
             target_id = _sanitize_optional(parsed.get("target_id"))
             proposed_start_utc = _sanitize_optional(parsed.get("proposed_start_utc"))
@@ -258,6 +326,10 @@ Respond ONLY with valid JSON in this format:
                 proposed_start_utc=proposed_start_utc,
             )
 
+        # 4. Save to Memory and Execute
+        action_history.append(f"Turn {obs.turn_count}: {action.command} | Target: {action.target_id} | Start: {action.proposed_start_utc}")
+
+        print(f" Turn {obs.turn_count}: {action.command} | target={action.target_id} | start={action.proposed_start_utc}")
         result = await env.step(action)
         obs = result.observation
         done = result.done
@@ -268,7 +340,6 @@ Respond ONLY with valid JSON in this format:
 async def main():
     env = MeetingNegotiatorV1Env(base_url="http://localhost:8000")
     try:
-        # The environment cycles deterministically through EASY, MEDIUM, HARD on each reset.
         await run_episode(env, "EASY")
         await run_episode(env, "MEDIUM")
         await run_episode(env, "HARD")
