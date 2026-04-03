@@ -11,9 +11,15 @@ from typing import Dict
 from openenv.core import EnvClient
 from openenv.core.client_types import StepResult
 from openenv.core.env_server.types import State
-
-from .models import MeetingNegotiatorV1Action, MeetingNegotiatorV1Observation
-
+try:
+    from .models import MeetingNegotiatorV1Action, MeetingNegotiatorV1Observation
+except ImportError:
+    import os as _os
+    import sys as _sys
+    _pkg_dir = _os.path.dirname(_os.path.abspath(__file__))
+    if _pkg_dir not in _sys.path:
+        _sys.path.insert(0, _pkg_dir)
+    from models import MeetingNegotiatorV1Action, MeetingNegotiatorV1Observation
 
 class MeetingNegotiatorV1Env(
     EnvClient[MeetingNegotiatorV1Action, MeetingNegotiatorV1Observation, State]

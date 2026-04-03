@@ -28,6 +28,11 @@ try:
         ScheduledEvent,
     )
 except ImportError:
+    import os as _os
+    import sys as _sys
+    _parent_dir = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+    if _parent_dir not in _sys.path:
+        _sys.path.insert(0, _parent_dir)
     from models import (
         MeetingNegotiatorV1Action,
         MeetingNegotiatorV1Observation,
