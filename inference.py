@@ -338,7 +338,7 @@ async def run_episode(env: MeetingNegotiatorV1Env, episode_label: str):
 
 
 async def main():
-    env = MeetingNegotiatorV1Env(base_url="http://localhost:8000")
+    env = MeetingNegotiatorV1Env(base_url="https://suyashk13-meeting-negotiator-v1.hf.space")
     try:
         await run_episode(env, "EASY")
         await run_episode(env, "MEDIUM")
