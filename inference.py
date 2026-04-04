@@ -20,7 +20,15 @@ from typing import Optional, List, Dict
 from openai import AsyncOpenAI
 from dotenv import load_dotenv
 
-from meeting_negotiator_v1 import MeetingNegotiatorV1Action, MeetingNegotiatorV1Env
+try:
+    from ..meeting_negotiator_v1 import MeetingNegotiatorV1Action, MeetingNegotiatorV1Env
+except ImportError:
+    import os as _os
+    import sys as _sys
+    _parent_dir = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+    if _parent_dir not in _sys.path:
+        _sys.path.insert(0, _parent_dir)
+    from meeting_negotiator_v1 import MeetingNegotiatorV1Action, MeetingNegotiatorV1Env
 
 load_dotenv()
 
@@ -73,9 +81,14 @@ def _sanitize_command(raw: str) -> str:
     return "SubmitFinalCalendar"
 
 def _sanitize_optional(value: Optional[str]) -> Optional[str]:
-    if value is None: return None
+    if value is None:
+        return None
+
     value = str(value).strip()
-    return value if value else None
+    if value in ("", "None", "null"):
+        return None
+    
+    return value
 
 def _parse_utc(value: str) -> datetime:
     return datetime.strptime(value, "%Y-%m-%dT%H:%MZ").replace(tzinfo=timezone.utc)
@@ -186,33 +199,40 @@ def _obs_to_prompt(obs, action_history: List[str]) -> str:
     history_str  = "\n".join(action_history) if action_history else "No previous actions taken."
 
     return f"""You are a strict meeting scheduling AI.
-Goal: Schedule all pending requests while respecting constraints.
+        Goal: Schedule all pending requests while respecting constraints.
+        
+        Current time (UTC): {obs.current_time_utc}
+        Turn: {obs.turn_count} / {obs.max_turns}
+        Last feedback: {obs.last_action_feedback}
 
-Current time (UTC): {obs.current_time_utc}
-Turn: {obs.turn_count} / {obs.max_turns}
-Last feedback: {obs.last_action_feedback}
+        ACTION HISTORY (Your past moves - DO NOT REPEAT FAILED OR REDUNDANT ACTIONS):
+        {history_str}
 
-ACTION HISTORY (Your past moves - DO NOT REPEAT FAILED OR REDUNDANT ACTIONS):
-{history_str}
+        PARTICIPANTS:
+        {participants}
 
-PARTICIPANTS:
-{participants}
+        CALENDAR (already booked — do not double-book these):
+        {calendar}
 
-CALENDAR (already booked — do not double-book these):
-{calendar}
+        PENDING REQUESTS (you must schedule all of these):
+        {pending}
 
-PENDING REQUESTS (you must schedule all of these):
-{pending}
+        RULES:
+        1. THE BUMP MECHANIC: You can ONLY bump meetings of LOWER priority. If a slot is blocked by a lower-priority meeting, directly use ScheduleNew to bump it.
+        2. EQUAL OR HIGHER PRIORITY (CRITICAL): You CANNOT bump meetings of equal or higher priority. If blocked by one, you MUST use RescheduleExisting to safely move the blocker to a valid, open slot before its deadline.
+        3. If Last Feedback says "Slot available", DO NOT check it again. Schedule it immediately.
+        4. Call SubmitFinalCalendar only when 'Pending requests' is empty.
+        5. All times must be UTC in format "YYYY-MM-DDTHH:MMZ".
+        6. ScheduleNew and RescheduleExisting MUST have a valid target_id.
 
-RULES:
-1. THE BUMP MECHANIC (CRITICAL): If a slot is blocked by a lower-priority meeting, DO NOT manually use RescheduleExisting on the blocker. Instead, directly use ScheduleNew for your higher-priority meeting in that slot. The system will automatically bump the blocker into your Pending Requests for you to handle later.
-2. If Last Feedback says "Slot available", DO NOT check it again. Schedule it immediately.
-3. Call SubmitFinalCalendar only when 'Pending requests' is empty.
-4. All times must be UTC in format "YYYY-MM-DDTHH:MMZ".
-5. ScheduleNew and RescheduleExisting MUST have a valid target_id.
-
-CRITICAL: Output ONLY a valid JSON object matching this exact schema. Do not write any other text or thoughts.
-{{"command": "CheckAvailability|ScheduleNew|RescheduleExisting|SubmitFinalCalendar", "target_id": "<id or null>", "proposed_start_utc": "<YYYY-MM-DDTHH:MMZ or null>"}}"""
+        CRITICAL: Output ONLY a valid JSON object matching this exact schema. You MUST fill out the "thought" key first to plan your temporal math.
+        {{
+          "thought": "Write 1-2 sentences calculating working hours and explaining why you chose this action and time.",
+          "command": "CheckAvailability|ScheduleNew|RescheduleExisting|SubmitFinalCalendar", 
+          "target_id": "<id or null>", 
+          "proposed_start_utc": "<YYYY-MM-DDTHH:MMZ or null>"
+        }}
+"""
 
 
 async def call_llm_with_retry(prompt: str) -> dict:
@@ -222,10 +242,11 @@ async def call_llm_with_retry(prompt: str) -> dict:
             kwargs = {
                 "model": MODEL_NAME,
                 "messages": [
-                    {"role": "system", "content": "You are a JSON-only API. You do not speak English. You speak ONLY JSON. Never provide explanations, preambles, or thoughts. Begin your response directly with '{' and end with '}'."},
+                    {"role": "system",
+                     "content": "You are an advanced scheduling AI. You must respond with a single, strictly formatted JSON object. You must include your reasoning in the 'thought' key before the command."
+                    },
                     {"role": "user", "content": prompt}
                 ],
-                # "max_tokens": 1024,
                 "temperature": 0.0,
             }
             response = await llm_client.chat.completions.create(**kwargs)
@@ -274,25 +295,25 @@ async def run_episode(env: MeetingNegotiatorV1Env, episode_label: str):
     score = 0.0
 
     while not done:
-        if USE_FALLBACK:
-            action = _fallback_action(obs)
-        else:
-            prompt = _obs_to_prompt(obs, action_history)
-            parsed = await call_llm_with_retry(prompt)
-
-            command = _sanitize_command(parsed.get("command"))
-            target_id = _sanitize_optional(parsed.get("target_id"))
-            proposed_start_utc = _sanitize_optional(parsed.get("proposed_start_utc"))
-
-            if command == "SubmitFinalCalendar":
-                target_id = None
-                proposed_start_utc = None
-
-            action = MeetingNegotiatorV1Action(
-                command=command,
-                target_id=target_id,
-                proposed_start_utc=proposed_start_utc,
-            )
+    # if USE_FALLBACK:
+    #     action = _fallback_action(obs)
+    # else:
+        prompt = _obs_to_prompt(obs, action_history)
+        parsed = await call_llm_with_retry(prompt)
+            
+        command = _sanitize_command(parsed.get("command"))
+        target_id = _sanitize_optional(parsed.get("target_id"))
+        proposed_start_utc = _sanitize_optional(parsed.get("proposed_start_utc"))
+        
+        if command == "SubmitFinalCalendar":
+            target_id = None
+            proposed_start_utc = None
+        
+        action = MeetingNegotiatorV1Action(
+            command=command,
+            target_id=target_id,
+            proposed_start_utc=proposed_start_utc,
+        )
 
         # Record action history internally
         action_history.append(f"Turn {obs.turn_count}: {action.command} | Target: {action.target_id} | Start: {action.proposed_start_utc}")
@@ -330,10 +351,11 @@ async def main():
     # If the hackathon requires testing against the docker image during validation, 
     # make sure this matches how the judges execute your env!
     env = MeetingNegotiatorV1Env(base_url="https://suyashk13-meeting-negotiator-v1.hf.space")
+    # env = MeetingNegotiatorV1Env(base_url="http://localhost:8000")
     try:
         await run_episode(env, "EASY")
         await run_episode(env, "MEDIUM")
-        await run_episode(env, "HARD")
+        await run_episode(env, "HARD") 
     finally:
         await env.close()
 
