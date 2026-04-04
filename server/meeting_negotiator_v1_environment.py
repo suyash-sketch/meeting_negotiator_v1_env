@@ -50,6 +50,11 @@ INVALID_ACTION_PENALTY = 0.05
 CONFLICT_ACTION_PENALTY = 0.05
 PREFERENCE_PENALTY_PER_ATTENDEE = 0.01
 
+SCHEDULE_SUCCESS_REWARD    = 0.25   # agent successfully books a pending request
+RESCHEDULE_SUCCESS_REWARD  = 0.10   # agent successfully moves an existing event
+PRIORITY_BONUS             = 0.10   # extra credit when booking urgent/high priority
+DEADLINE_PROXIMITY_BONUS   = 0.05   # extra credit when booked well before deadline
+
 SCORE_PENALTIES = {
     "unscheduled": 0.40,
     "deadline": 0.20,
@@ -168,7 +173,7 @@ class MeetingNegotiatorV1Environment(Environment):
             if key in scenarios:
                 return scenarios[key]
         order = ["EASY", "MEDIUM", "HARD"]
-        # order = ["HARD", "MEDIUM", "EASY"]
+        # order = ["HARD"]
         index = (reset_count - 1) % len(order)
         return scenarios[order[index]]
 
@@ -468,14 +473,49 @@ class MeetingNegotiatorV1Environment(Environment):
         self._state.calendar_state.append(new_event)
         self._state.pending_requests = [r for r in self._state.pending_requests if r.request_id != request.request_id]
 
+        reward += SCHEDULE_SUCCESS_REWARD
+
+        # bonus for priority — urgent meetings matter more than low ones
+        priority_level = PRIORITY_ORDER[request.priority]  # 0=low, 3=urgent
+        reward += PRIORITY_BONUS * (priority_level / 3)
+
+        # bonus for scheduling comfortably before the deadline
+        deadline_dt = self._parse_utc(request.deadline_utc)
+        minutes_remaining = (deadline_dt - end_dt).total_seconds() / 60
+        if minutes_remaining > 30:
+            reward += DEADLINE_PROXIMITY_BONUS
+
+        # ── preview the terminal penalties this booking will incur ──
+        # mirror exactly what _compute_score will charge later,
+        # so intermediate and terminal signals are consistent
+        for attendee in request.attendees:
+            participant = self._state.participants.get(attendee)
+            if participant is None:
+                reward -= SCORE_PENALTIES["working_hours"]
+                continue
+            if not self._within_working_hours(participant, start_dt, end_dt):
+                reward -= SCORE_PENALTIES["working_hours"]   # same weight as terminal
+            if participant.preferred_hours:
+                if not self._within_preferred_hours(participant, start_dt, end_dt):
+                    reward -= SCORE_PENALTIES["preference"]  # same weight as terminal
+
         feedback = f"Scheduled {request.request_id} at {new_event.start_time_utc}."
-        pref_violations = self._preference_violations(request.attendees, start_dt, end_dt)
-        if pref_violations:
-            reward -= PREFERENCE_PENALTY_PER_ATTENDEE * len(pref_violations)
-            feedback += f" Outside preferred hours: {', '.join(pref_violations)}."
         if bumped:
             feedback += f" Bumped lower-priority events: {', '.join(bumped)}."
-        return reward, feedback
+
+        return round(reward, 4), feedback
+
+        # feedback = f"Scheduled {request.request_id} at {new_event.start_time_utc}."
+
+        # #Old preference violation block
+        # pref_violations = self._preference_violations(request.attendees, start_dt, end_dt)
+        # if pref_violations:
+        #     reward -= PREFERENCE_PENALTY_PER_ATTENDEE * len(pref_violations)
+        #     feedback += f" Outside preferred hours: {', '.join(pref_violations)}."
+        # if bumped:
+        #     feedback += f" Bumped lower-priority events: {', '.join(bumped)}."
+
+        # return round(reward, 4), feedback
 
     def _handle_reschedule_existing(
         self, action: MeetingNegotiatorV1Action, reward: float
@@ -513,6 +553,8 @@ class MeetingNegotiatorV1Environment(Environment):
         bumped = self._bump_conflicts(conflicts, event.priority)
         event.start_time_utc = self._format_utc(start_dt)
 
+        reward += RESCHEDULE_SUCCESS_REWARD
+
         feedback = f"Rescheduled {event.event_id} to {event.start_time_utc}."
         pref_violations = self._preference_violations(event.attendees, start_dt, end_dt)
         if pref_violations:
@@ -520,7 +562,8 @@ class MeetingNegotiatorV1Environment(Environment):
             feedback += f" Outside preferred hours: {', '.join(pref_violations)}."
         if bumped:
             feedback += f" Bumped lower-priority events: {', '.join(bumped)}."
-        return reward, feedback
+
+        return round(reward, 4), feedback
 
     # Constraint evaluation
 
@@ -600,7 +643,9 @@ class MeetingNegotiatorV1Environment(Environment):
             for req in self._state.all_requests:
                 if req.request_id == event.request_id:
                     return req
-        return MeetingRequest(
+
+        # Create new request for bumped event without original request_id
+        new_request = MeetingRequest(
             request_id=f"REQ-BUMP-{event.event_id}",
             attendees=event.attendees,
             duration_minutes=event.duration_minutes,
@@ -608,6 +653,11 @@ class MeetingNegotiatorV1Environment(Environment):
             deadline_utc=self._format_utc(self._parse_utc(self._state.current_time_utc) + timedelta(days=1)),
             title="Bumped meeting",
         )
+
+        # Add to all_requests so the grader will evaluate it
+        if not any(r.request_id == new_request.request_id for r in self._state.all_requests):
+            self._state.all_requests.append(new_request)
+        return new_request
 
     def _request_in_pending(self, request_id: str) -> bool:
         return any(r.request_id == request_id for r in self._state.pending_requests)
