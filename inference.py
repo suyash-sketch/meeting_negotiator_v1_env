@@ -35,6 +35,7 @@ load_dotenv()
 API_BASE_URL = os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
 MODEL_NAME = os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
 API_KEY = os.getenv("API_KEY") or os.getenv("HF_TOKEN")
+IMAGE_NAME = os.getenv("IMAGE_NAME") or os.getenv("LOCAL_IMAGE_NAME")
 
 llm_client = AsyncOpenAI(
     base_url=API_BASE_URL,
@@ -341,7 +342,7 @@ async def run_episode(env: MeetingNegotiatorV1Env, episode_label: str):
 
     # Calculate final completion metrics
     score = float(obs.score) if obs.score is not None else 0.0
-    
+
     # DYNAMIC THRESHOLD: Hard task maxes out at 0.850 due to unavoidable preference penalties
     threshold = 0.85 if episode_label == "HARD" else SUCCESS_SCORE_THRESHOLD
     success = score >= threshold
@@ -351,16 +352,29 @@ async def run_episode(env: MeetingNegotiatorV1Env, episode_label: str):
 
 
 async def main():
-    # If the hackathon requires testing against the docker image during validation, 
-    # make sure this matches how the judges execute your env!
-    env = MeetingNegotiatorV1Env(base_url="https://suyashk13-meeting-negotiator-v1.hf.space")
-    # env = MeetingNegotiatorV1Env(base_url="http://localhost:8000")
+    # 1. Dynamically connect to the environment the way the Grader expects
+    if IMAGE_NAME:
+        print(f"[DEBUG] Booting environment from docker image: {IMAGE_NAME}", flush=True)
+        env = await MeetingNegotiatorV1Env.from_docker_image(IMAGE_NAME)
+    else:
+        fallback_url = os.getenv("ENV_BASE_URL", "http://localhost:8000")
+        print(f"[DEBUG] No IMAGE_NAME found. Connecting to URL: {fallback_url}", flush=True)
+        env = MeetingNegotiatorV1Env(base_url=fallback_url)
+
     try:
+        # 2. Run all three tasks
         await run_episode(env, "EASY")
         await run_episode(env, "MEDIUM")
         await run_episode(env, "HARD") 
     finally:
-        await env.close()
+        # 3. Safely close the environment (Crucial for shutting down the Docker container)
+        try:
+            await env.close()
+        except Exception as e:
+            print(f"[DEBUG] env.close() error (container cleanup): {e}", flush=True)
+
+if __name__ == "__main__":
+    asyncio.run(main())
 
 if __name__ == "__main__":
     asyncio.run(main())
