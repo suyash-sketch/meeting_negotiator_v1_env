@@ -17,11 +17,21 @@ A multi-step RL environment for calendar coordination with time zones, prioritie
 
 ## Scenarios
 
-The environment cycles deterministically across three scenarios on each reset:
+The environment cycles deterministically across three scenarios on each reset. **Note:** Not all scenarios allow for a perfect `1.00` score. Some scenarios contain unavoidable soft-constraint (preference) conflicts to test tradeoff reasoning.  
 
-1. EASY: The Empty Slate
-2. MEDIUM: The Timezone Jigsaw
-3. HARD: Priority Cascade (The Clever Mechanic)
+### 1. EASY: The Empty Slate
+* **Max Score: 1.00**
+* **Description:** A simple 1:1 meeting with basic working hour constraints. An introductory task to verify the agent can correctly parse UTC boundaries.
+
+### 2. MEDIUM: The Greedy Preference Trap
+* **Max Score: 0.90**
+* **Description:** Multi-timezone coordination optimizing for soft preferences. 
+* **The Catch:** The agent must schedule two meetings into two valid slots. Greedily taking the first available slot incurs a `-0.15` penalty. Planning ahead and reversing the order yields the optimal `-0.10` penalty (Score: 0.90). A perfect 1.00 is mathematically impossible.
+
+### 3. HARD: The Deadline Trap
+* **Max Score: 0.85**
+* **Description:** A complex priority cascade requiring multi-step lookahead, dynamic meeting bumping, and strict deadline management across three timezones.
+* **The Catch:** Executing the optimal priority cascade forces the agent to schedule meetings outside of Bob and Alice's preferred hours. Navigating the cascade flawlessly yields the maximum possible score of `0.850` (due to `-0.15` in unavoidable preference penalties).
 
 ## Quick Start
 
@@ -29,7 +39,7 @@ The environment cycles deterministically across three scenarios on each reset:
 from meeting_negotiator_v1 import MeetingNegotiatorV1Action, MeetingNegotiatorV1Env
 
 with MeetingNegotiatorV1Env(base_url="http://localhost:8000") as env:
-    result = env.reset()
+    result = env.reset(scenario_id="HARD")
     obs = result.observation
     print(obs.last_action_feedback)
 
