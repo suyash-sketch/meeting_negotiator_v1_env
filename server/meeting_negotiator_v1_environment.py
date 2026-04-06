@@ -208,7 +208,7 @@ class MeetingNegotiatorV1Environment(Environment):
             calendar_state=[],
             pending_requests=[request],
             all_requests=[request],
-            max_turns=10,
+            max_turns=9,
         )
 
     def _scenario_medium(self) -> ScenarioSpec:
