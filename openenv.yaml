@@ -5,3 +5,10 @@ runtime: fastapi
 app: server.app:app
 port: 8000
 
+tasks:
+  - id: "EASY"
+    description: "The Empty Slate - 1:1 meeting with simple working hour constraints."
+  - id: "MEDIUM"
+    description: "The Greedy Preference Trap - Multi-timezone coordination optimizing for soft preferences."
+  - id: "HARD"
+    description: "The Deadline Trap - Complex priority cascade, bumping, and strict deadline management."
