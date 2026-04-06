@@ -295,19 +295,19 @@ class MeetingNegotiatorV1Environment(Environment):
                 name="CTO",
                 timezone="PST",
                 working_hours=["09:00-18:00"],
-                preferred_hours=["10:00-14:00"],
+                preferred_hours=["11:00-14:00"],
             ),
             "Alice": Participant(
                 name="Alice",
                 timezone="EST",
                 working_hours=["09:00-17:00"],
-                preferred_hours=["09:00-11:00"],
+                preferred_hours=["09:00-11:00", "12:00-13:00"],
             ),
             "Bob": Participant(
                 name="Bob",
                 timezone="GMT",
                 working_hours=["08:00-18:00"], # <-- CHANGED: Bob now works until 18:00
-                preferred_hours=["09:00-11:00"],
+                preferred_hours=["09:00-11:00", "15:00-18:00"],
             ),
         }
 
@@ -322,8 +322,8 @@ class MeetingNegotiatorV1Environment(Environment):
             ScheduledEvent(
                 event_id="EVT-CEO-1",
                 attendees=["CEO"],
-                start_time_utc="2026-01-15T17:00Z",             # 12:00 EST
-                duration_minutes=90,  #END TIME IN UTC: 18:30
+                start_time_utc="2026-01-15T16:30Z",             # 12:00 EST
+                duration_minutes=90,  #END TIME IN UTC: 18:00
                 priority="high",
             ),
             # CEO blocked 19:30Z-22:00Z
@@ -434,7 +434,7 @@ class MeetingNegotiatorV1Environment(Environment):
             pending_requests=[urgent_request, high_request, medium_request],
             # <-- CHANGED: Included the bumped request in all_requests so the grader evaluates its deadline
             all_requests=[urgent_request, high_request, medium_request, bumped_meeting_request], 
-            max_turns=12,
+            max_turns=10,
         )
 
     # Action handlers
