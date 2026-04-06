@@ -15,9 +15,18 @@ tags:
 
 A multi-step RL environment for calendar coordination with time zones, priorities, preferences, deadlines, and cascading conflicts. The agent must propose slots, adjust, negotiate, and finalize a valid calendar while maximizing satisfaction and minimizing conflicts.
 
-## Scenarios
+## Project Layout
 
-The environment cycles deterministically across three scenarios on each reset. **Note:** Not all scenarios allow for a perfect `1.00` score. Some scenarios contain unavoidable soft-constraint (preference) conflicts to test tradeoff reasoning.  
+- `server/meeting_negotiator_v1_environment.py` Environment implementation, scenarios, rewards, and scoring
+- `models.py` Action, observation, state, and data models
+- `client.py` Thin OpenEnv client wrapper
+- `inference.py` LLM inference script with grader-compatible logging
+- `openenv.yaml` OpenEnv metadata for deployment
+- `server/app.py` FastAPI app entrypoint for HTTP/WS
+
+## Scenarios (Tasks)
+
+The environment supports scenario selection by name in `reset(scenario_id=...)`. If no scenario is provided, it cycles deterministically: EASY → MEDIUM → HARD.
 
 ### 1. EASY: The Empty Slate
 * **Max Score: 1.00**
@@ -28,10 +37,11 @@ The environment cycles deterministically across three scenarios on each reset. *
 * **Description:** Multi-timezone coordination optimizing for soft preferences. 
 * **The Catch:** The agent must schedule two meetings into two valid slots. Greedily taking the first available slot incurs a `-0.15` penalty. Planning ahead and reversing the order yields the optimal `-0.10` penalty (Score: 0.90). A perfect 1.00 is mathematically impossible.
 
-### 3. HARD: The Deadline Trap & The Decoy
+3. **HARD: The Deadline Trap**
 * **Max Score: 1.00**
 * **Description:** A complex priority cascade requiring multi-step lookahead, dynamic meeting bumping, strict deadline management, and soft-constraint optimization across three timezones.
 * **The Catch:** The model must execute a flawless priority bump to schedule a tight-deadline meeting, while actively tracking dynamically injected pending requests. Furthermore, the timeline contains a chronological "Decoy Trap." Greedy models that grab the first available slot will silently violate executive preferences (Max Score: `0.90`). Elite models that simulate the whole board and look ahead will find the optimal slot and achieve a perfect `1.00`.
+All dates are set to **January 15, 2026** to avoid DST ambiguity.
 
 ## Quick Start
 
@@ -63,34 +73,68 @@ with MeetingNegotiatorV1Env(base_url="http://localhost:8000") as env:
 
 ## Action Space
 
-`MeetingNegotiatorV1Action`:
+`MeetingNegotiatorV1Action`
 - `command`: `CheckAvailability`, `ScheduleNew`, `RescheduleExisting`, `SubmitFinalCalendar`
-- `target_id`: request_id for ScheduleNew, event_id for RescheduleExisting
-- `proposed_start_utc`: required for CheckAvailability, ScheduleNew, RescheduleExisting
+- `target_id`: request_id for `ScheduleNew`, event_id for `RescheduleExisting`
+- `proposed_start_utc`: required for `CheckAvailability`, `ScheduleNew`, `RescheduleExisting`
 
 ## Observation Space
 
-`MeetingNegotiatorV1Observation` includes:
+`MeetingNegotiatorV1Observation`
 - `current_time_utc`, `participants`, `calendar_state`, `pending_requests`
 - `last_action_feedback`, `turn_count`, `max_turns`
 - `score` (0.0-1.0), `reward`, `done`
 
-## Reward and Scoring
+## Rewards and Scoring
 
-- Reward is penalty-based per action with a small step cost plus penalties for invalid/conflicting actions.
-- Final score is constraint-based in `[0.0, 1.0]` and computed on `SubmitFinalCalendar`.
-- Constraints: deadlines, working hours, conflicts, priority inversions, and preference satisfaction.
+The environment provides **dense, penalty-based rewards** plus a final score.
 
-## Building the Docker Image
+Step penalties and bonuses (see `server/meeting_negotiator_v1_environment.py`):
+- Step cost each action
+- Penalties for invalid actions and conflicts
+- Small penalties for preference violations
+- Bonuses for successful scheduling, priority, and early deadline satisfaction
+
+Final score (constraint-based, deterministic):
+- Penalizes unscheduled requests, deadline misses, outside working hours, conflicts, and preference violations
+- `score ∈ [0.0, 1.0]` on `SubmitFinalCalendar`
+- Maximum possible score: `1.0`
+
+## Running Locally
+
+Start the server:
+
+```bash
+uvicorn server.app:app --host 0.0.0.0 --port 8000
+```
+
+Then run the inference script:
+
+```bash
+python inference.py
+```
+
+Required environment variables for `inference.py`:
+- `API_BASE_URL`
+- `MODEL_NAME`
+- `HF_TOKEN` (or `API_KEY`)
+
+## Deployment
+
+Build the Docker image:
 
 ```bash
 docker build -t meeting_negotiator_v1-env:latest -f server/Dockerfile .
 ```
 
-## Deploying to Hugging Face Spaces
+Push to Hugging Face using OpenEnv:
 
 ```bash
 openenv push
 ```
 
-This uploads the environment with the web UI at `/web`, API docs at `/docs`, and WebSocket at `/ws`.
+## Notes
+
+- The environment supports multiple concurrent WebSocket sessions.
+- Unknown timezones raise a validation error and cause the slot to be rejected.
+- The preference signal is surfaced in `last_action_feedback` to aid learning.
