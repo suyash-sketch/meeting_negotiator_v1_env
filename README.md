@@ -28,10 +28,10 @@ The environment cycles deterministically across three scenarios on each reset. *
 * **Description:** Multi-timezone coordination optimizing for soft preferences. 
 * **The Catch:** The agent must schedule two meetings into two valid slots. Greedily taking the first available slot incurs a `-0.15` penalty. Planning ahead and reversing the order yields the optimal `-0.10` penalty (Score: 0.90). A perfect 1.00 is mathematically impossible.
 
-### 3. HARD: The Deadline Trap
-* **Max Score: 0.85**
-* **Description:** A complex priority cascade requiring multi-step lookahead, dynamic meeting bumping, and strict deadline management across three timezones.
-* **The Catch:** Executing the optimal priority cascade forces the agent to schedule meetings outside of Bob and Alice's preferred hours. Navigating the cascade flawlessly yields the maximum possible score of `0.850` (due to `-0.15` in unavoidable preference penalties).
+### 3. HARD: The Deadline Trap & The Decoy
+* **Max Score: 1.00**
+* **Description:** A complex priority cascade requiring multi-step lookahead, dynamic meeting bumping, strict deadline management, and soft-constraint optimization across three timezones.
+* **The Catch:** The model must execute a flawless priority bump to schedule a tight-deadline meeting, while actively tracking dynamically injected pending requests. Furthermore, the timeline contains a chronological "Decoy Trap." Greedy models that grab the first available slot will silently violate executive preferences (Max Score: `0.90`). Elite models that simulate the whole board and look ahead will find the optimal slot and achieve a perfect `1.00`.
 
 ## Quick Start
 
