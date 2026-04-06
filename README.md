@@ -40,7 +40,9 @@ The environment supports scenario selection by name in `reset(scenario_id=...)`.
 3. **HARD: The Deadline Trap**
 * **Max Score: 1.00**
 * **Description:** A complex priority cascade requiring multi-step lookahead, dynamic meeting bumping, strict deadline management, and soft-constraint optimization across three timezones.
-* **The Catch:** The model must execute a flawless priority bump to schedule a tight-deadline meeting, while actively tracking dynamically injected pending requests. Furthermore, the timeline contains a chronological "Decoy Trap." Greedy models that grab the first available slot will silently violate executive preferences (Max Score: `0.90`). Elite models that simulate the whole board and look ahead will find the optimal slot and achieve a perfect `1.00`.
+* **The Catch:** The model must execute a flawless priority bump to schedule a tight-deadline meeting, while actively tracking dynamically injected pending requests. Furthermore, the timeline contains a chronological "Decoy Trap." Greedy models that grab the first available slot will silently violate executive preferences (Max Score: `0.90`). Elite models that simulate the whole board and look ahead will find the optimal slot and achieve a perfect `1.00`.  
+
+
 All dates are set to **January 15, 2026** to avoid DST ambiguity.
 
 ## Quick Start
