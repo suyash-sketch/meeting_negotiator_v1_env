@@ -29,7 +29,7 @@ A multi-step RL environment for calendar coordination with time zones, prioritie
 The environment supports scenario selection by name in `reset(scenario_id=...)`. If no scenario is provided, it cycles deterministically: EASY → MEDIUM → HARD.
 
 ### 1. EASY: The Empty Slate
-* **Max Score: 1.00**
+* **Max Score: 0.99**
 * **Description:** A simple 1:1 meeting with basic working hour constraints. An introductory task to verify the agent can correctly parse UTC boundaries.
 
 ### 2. MEDIUM: The Greedy Preference Trap
@@ -37,11 +37,17 @@ The environment supports scenario selection by name in `reset(scenario_id=...)`.
 * **Description:** Multi-timezone coordination optimizing for soft preferences. 
 * **The Catch:** The agent must schedule two meetings into two valid slots. Greedily taking the first available slot incurs a `-0.15` penalty. Planning ahead and reversing the order yields the optimal `-0.10` penalty (Score: 0.90). A perfect 1.00 is mathematically impossible.
 
-3. **HARD: The Deadline Trap**
-* **Max Score: 1.00**
-* **Description:** A complex priority cascade requiring multi-step lookahead, dynamic meeting bumping, strict deadline management, and soft-constraint optimization across three timezones.
-* **The Catch:** The model must execute a flawless priority bump to schedule a tight-deadline meeting, while actively tracking dynamically injected pending requests. Furthermore, the timeline contains a chronological "Decoy Trap." Greedy models that grab the first available slot will silently violate executive preferences (Max Score: `0.90`). Elite models that simulate the whole board and look ahead will find the optimal slot and achieve a perfect `1.00`.  
+### 3. HARD: The Zero-Sum Domino Cascade
 
+* **Max Score: 0.80**
+* **Description**: A 5-step priority cascade requiring reverse-chronological spatial reasoning, fractional timezone math (IST), and soft-constraint optimization across four timezones.
+* **The Catch**: The model must untangle an unbumpable gridlock using manual rescheduling to clear a strict-deadline funnel, while actively tracking dynamically bumped meetings and a 24-hour synthetic deadline "wall." Furthermore, a chronological "Trolley Problem" decoy trap will silently penalize greedy models that grab the first available slot (Max Score: 0.80).
+
+## **Possible Optimal Solution**
+
+![Participants and Working Hours](participants_preferences.png)
+
+![Possible Solution](hard_task_solution.png)
 
 All dates are set to **January 15, 2026** to avoid DST ambiguity.
 
