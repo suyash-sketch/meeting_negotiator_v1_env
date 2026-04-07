@@ -341,7 +341,7 @@ async def run_episode(env: MeetingNegotiatorV1Env, episode_label: str):
         log_step(step=steps_taken, action=action_str, reward=reward, done=done, error=error_msg)
 
     # Calculate final completion metrics
-    score = float(obs.score) if obs.score is not None else 0.0
+    score = float(obs.score) if obs.score is not None else 0.01
 
     # DYNAMIC THRESHOLD: Hard task maxes out at 0.850 due to unavoidable preference penalties
     threshold = 0.85 if episode_label == "HARD" else SUCCESS_SCORE_THRESHOLD
