@@ -127,7 +127,7 @@ class MeetingNegotiatorV1Environment(Environment):
 
         if self._state.turn_count >= self._state.max_turns and action.command != "SubmitFinalCalendar":
             self._state.is_done = True
-            self._state.score = 0.0
+            self._state.score = 0.01
             feedback = "Max turns exceeded without submission. Episode failed."
             reward -= INVALID_ACTION_PENALTY
             self._state.total_reward += reward
@@ -698,8 +698,8 @@ class MeetingNegotiatorV1Environment(Environment):
 
         penalty += self._conflict_penalty()
 
-        score = max(0.0, 1.0 - penalty)
-        return min(1.0, score)
+        score = max(0.01, 1.0 - penalty)
+        return min(0.99, score)
 
     def _conflict_penalty(self) -> float:
         penalty = 0.0
