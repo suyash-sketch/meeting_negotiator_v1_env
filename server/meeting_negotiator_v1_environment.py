@@ -273,168 +273,154 @@ class MeetingNegotiatorV1Environment(Environment):
         )
 
     def _scenario_hard(self) -> ScenarioSpec:
-        # UTC working hours (January, no DST):
-        # CEO  EST (UTC-5): 08:00-17:00 local = 13:00Z-22:00Z
-        # CTO  PST (UTC-8): 09:00-18:00 local = 17:00Z-02:00Z
-        # Alice EST (UTC-5): 09:00-17:00 local = 14:00Z-22:00Z
-        # Bob  GMT (UTC+0): 08:00-18:00 local = 08:00Z-18:00Z  <-- CHANGED (Ends at 18:00)
-        #
-        # Key overlaps:
-        # CEO+Alice:  14:00Z-22:00Z
-        # Alice+Bob:  14:00Z-18:00Z  (Bob ends at 18:00Z)
-        # CEO+CTO:    17:00Z-22:00Z
+        # UTC Working Hours Math:
+        # CEO (EST): 08:00-17:00 EST -> 13:00Z-22:00Z
+        # CTO (PST): 09:00-18:00 PST -> 17:00Z-02:00Z
+        # Alice (EST): 09:00-17:00 EST -> 14:00Z-22:00Z
+        # Bob (GMT): 08:00-18:00 GMT -> 08:00Z-18:00Z
+        # Dev (IST): 14:00-23:59 IST -> 08:30Z-18:29Z (Night shift to overlap US)
 
         participants = {
             "CEO": Participant(
                 name="CEO",
                 timezone="EST",
                 working_hours=["08:00-17:00"],
-                preferred_hours=["09:00-11:00", "15:00-17:00"],
+                preferred_hours=["16:00-17:00"], # 21:00Z-22:00Z (The Global Trap Optimal Slot)
             ),
             "CTO": Participant(
                 name="CTO",
                 timezone="PST",
                 working_hours=["09:00-18:00"],
-                preferred_hours=["11:00-14:00"],
+                preferred_hours=["10:00-11:00"], # 18:00Z-19:00Z (The Global Trap Bait Slot)
             ),
             "Alice": Participant(
                 name="Alice",
                 timezone="EST",
                 working_hours=["09:00-17:00"],
-                preferred_hours=["09:00-11:00", "12:00-13:00"],
+                preferred_hours=["16:00-17:00"], # 21:00Z-22:00Z (The Global Trap Optimal Slot)
             ),
             "Bob": Participant(
                 name="Bob",
                 timezone="GMT",
-                working_hours=["08:00-18:00"], # <-- CHANGED: Bob now works until 18:00
-                preferred_hours=["09:00-11:00", "15:00-18:00"],
+                working_hours=["08:00-18:00"],
+                preferred_hours=["16:00-17:00"], 
+            ),
+            "Dev": Participant(
+                name="Dev",
+                timezone="IST",
+                working_hours=["14:00-23:59"], 
+                preferred_hours=["14:30-16:30"], # 09:00Z-11:00Z (Morning free slot for bumped meeting)
             ),
         }
 
-        # Calendar state — verified UTC:
-        # CEO free windows:  14:00Z-17:00Z, 18:30Z-19:30Z
-        # Alice free windows: 14:00Z-15:30Z, 17:00Z-18:00Z, 20:00Z-22:00Z
-        # Bob free windows:   08:00Z-10:00Z, 13:00Z-14:00Z, 15:00Z-18:00Z
-        # CTO free windows:   17:00Z-19:00Z, 21:00Z-02:00Z
-
         calendar_state = [
-            # CEO blocked 17:00Z-18:30Z
+            # === BLOCKERS TO FORCE THE CASCADE ===
+            # Bob is completely blocked except for 16:00Z
             ScheduledEvent(
-                event_id="EVT-CEO-1",
-                attendees=["CEO"],
-                start_time_utc="2026-01-15T16:30Z",             # 12:00 EST
-                duration_minutes=90,  #END TIME IN UTC: 18:00
-                priority="high",
-            ),
-            # CEO blocked 19:30Z-22:00Z
-            ScheduledEvent(
-                event_id="EVT-CEO-2",
-                attendees=["CEO"],
-                start_time_utc="2026-01-15T19:30Z",             # 14:30 EST
-                duration_minutes=90, #END TIME IN UTC: 21:00
-                priority="high",
-            ),
-            # Alice blocked 15:30Z-17:00Z
-            ScheduledEvent(
-                event_id="EVT-ALICE-1",
-                attendees=["Alice"],
-                start_time_utc="2026-01-15T15:30Z",  # 10:30 EST
-                duration_minutes=90,
-                priority="medium",
-            ),
-            # Alice blocked 18:00Z-20:00Z
-            ScheduledEvent(
-                event_id="EVT-ALICE-2",
-                attendees=["Alice"],
-                start_time_utc="2026-01-15T18:00Z",  # 13:00 EST
-                duration_minutes=120,
-                priority="medium",
-            ),
-            # Bob blocked 10:00Z-13:00Z 
-            ScheduledEvent(
-                event_id="EVT-BOB-1",
+                event_id="EVT-BOB-MORNING",
                 attendees=["Bob"],
-                start_time_utc="2026-01-15T10:00Z",
-                duration_minutes=180,
-                priority="medium",
+                start_time_utc="2026-01-15T08:00Z",
+                duration_minutes=360, # 08:00Z - 14:00Z
+                priority="urgent",
             ),
-            # Bob blocked 14:00Z-15:00Z
             ScheduledEvent(
-                event_id="EVT-BOB-2",
+                event_id="EVT-BOB-MID",
                 attendees=["Bob"],
+                start_time_utc="2026-01-15T15:00Z",
+                duration_minutes=60,
+                priority="urgent",
+            ),
+            # THE FIX: "The Door Slammer" - Blocks Bob from jumping straight to 17:00Z
+            ScheduledEvent(
+                event_id="EVT-BOB-LATE",
+                attendees=["Bob"],
+                start_time_utc="2026-01-15T17:00Z",
+                duration_minutes=60,
+                priority="urgent",
+            ),
+            # Alice is blocked at 15:00Z
+            ScheduledEvent(
+                event_id="EVT-ALICE-MID",
+                attendees=["Alice"],
+                start_time_utc="2026-01-15T15:00Z",
+                duration_minutes=60,
+                priority="urgent",
+            ),
+
+            # === PHASE 1: THE TRIPLE DOMINO ===
+            # Domino 1: Blocks 14:00Z. MUST move to 16:00Z (only open slot left for Alice+Bob).
+            ScheduledEvent(
+                event_id="EVT-BOB-URGENT",
+                attendees=["Alice", "Bob"],
                 start_time_utc="2026-01-15T14:00Z",
                 duration_minutes=60,
-                priority="medium",
+                priority="urgent",
             ),
-            # CTO blocked 19:00Z-21:00Z
+            # Domino 2: Blocks 16:00Z. MUST move to 17:00Z.
             ScheduledEvent(
-                event_id="EVT-CTO-1",
-                attendees=["CTO"],
-                start_time_utc="2026-01-15T19:00Z",  # 11:00 PST
-                duration_minutes=120,
-                priority="medium",
+                event_id="EVT-ALICE-URGENT", 
+                attendees=["Alice", "Dev"],
+                start_time_utc="2026-01-15T16:00Z",
+                duration_minutes=60,
+                priority="urgent", 
             ),
-            # Low-priority Alice+Bob meeting at 15:00Z — bumpable
+            # Domino 3: The Bump Target at 17:00Z. Gets destroyed by Domino 2.
             ScheduledEvent(
-                event_id="EVT-LOW-ALICE-BOB",
-                attendees=["Alice", "Bob"],
-                start_time_utc="2026-01-15T15:00Z",
-                duration_minutes=30,
+                event_id="EVT-DEV-LOW",
+                attendees=["Dev"],
+                start_time_utc="2026-01-15T17:00Z",
+                duration_minutes=60,
                 priority="low",
-                request_id="REQ-BUMPED-ALICE-BOB", # <-- CHANGED: Linked to request
+                request_id="REQ-BUMPED-DEV",
+            ),
+
+            # === PHASE 2: THE GLOBAL PENALTY TRAP ===
+            # Blocks 19:00Z and 20:00Z to force the Trolley Problem (18:00Z vs 21:00Z)
+            ScheduledEvent(
+                event_id="EVT-CEO-LATE",
+                attendees=["CEO"],
+                start_time_utc="2026-01-15T19:00Z",
+                duration_minutes=120, # 19:00Z - 21:00Z
+                priority="urgent",
             ),
         ]
 
-        # <-- ADDED: Explicitly define the bumped meeting request with a tight deadline
-        bumped_meeting_request = MeetingRequest(
-            request_id="REQ-BUMPED-ALICE-BOB",
-            attendees=["Alice", "Bob"],
-            duration_minutes=30,
+        bumped_dev = MeetingRequest(
+            request_id="REQ-BUMPED-DEV",
+            attendees=["Dev"],
+            duration_minutes=60,
             priority="low",
-            deadline_utc="2026-01-15T17:30Z", # Tight deadline forces it into the 17:00Z slot
-            title="Team standup (reschedulable)",
+            deadline_utc="2026-01-15T18:00Z",
+            title="Dev Async Work",
         )
 
-        # R1 URGENT: CEO+Alice, 60min, deadline 18:00Z
-        urgent_request = MeetingRequest(
-            request_id="REQ-URGENT",
-            attendees=["CEO", "Alice"],
+        req_urgent = MeetingRequest(
+            request_id="REQ-URGENT-ALL-HANDS",
+            attendees=["CEO", "Alice", "Bob"],
             duration_minutes=60,
             priority="urgent",
-            deadline_utc="2026-01-15T18:00Z",
-            title="Emergency CEO-Alice sync",
+            deadline_utc="2026-01-15T15:00Z", # Forces the meeting into exactly 14:00Z
+            title="Urgent All Hands",
         )
 
-        # R2 HIGH: Alice+Bob, 30min, deadline 15:45Z (TIGHT)
-        high_request = MeetingRequest(
-            request_id="REQ-HIGH",
-            attendees=["Alice", "Bob"],
-            duration_minutes=30,
-            priority="high",
-            deadline_utc="2026-01-15T15:45Z",
-            title="Alice-Bob handoff",
-        )
-
-        # R3 MEDIUM: CEO+CTO, 60min, deadline 22:00Z
-        medium_request = MeetingRequest(
-            request_id="REQ-MEDIUM",
-            attendees=["CEO", "CTO"],
+        req_cto = MeetingRequest(
+            request_id="REQ-CTO-SYNC",
+            attendees=["CEO", "CTO", "Alice"],
             duration_minutes=60,
             priority="medium",
             deadline_utc="2026-01-15T22:00Z",
-            title="CEO-CTO strategy sync",
+            title="CTO Sync",
         )
 
         return ScenarioSpec(
             scenario_id="HARD",
-            description="The Deadline Trap",
+            description="The Zero-Sum Domino Cascade",
             current_time_utc="2026-01-15T08:00Z",
             participants=participants,
             calendar_state=calendar_state,
-            pending_requests=[urgent_request, high_request, medium_request],
-            # <-- CHANGED: Included the bumped request in all_requests so the grader evaluates its deadline
-            all_requests=[urgent_request, high_request, medium_request, bumped_meeting_request], 
-            max_turns=10,
+            pending_requests=[req_urgent, req_cto],
+            all_requests=[req_urgent, req_cto, bumped_dev],
+            max_turns=12,
         )
 
     # Action handlers
@@ -579,7 +565,7 @@ class MeetingNegotiatorV1Environment(Environment):
         if start_dt < self._parse_utc(self._state.current_time_utc):
             issues.append("proposed time is in the past")
 
-        if request.deadline_utc and start_dt > self._parse_utc(request.deadline_utc):
+        if request.deadline_utc and end_dt > self._parse_utc(request.deadline_utc):
             issues.append("misses deadline")
 
         for attendee in request.attendees:
@@ -729,7 +715,7 @@ class MeetingNegotiatorV1Environment(Environment):
         return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
 
     def _tz_offset(self, tz: str) -> timezone:
-        tz_map = {"PST": -8, "EST": -5, "GMT": 0, "UTC": 0}
+        tz_map = {"PST": -8, "EST": -5, "GMT": 0, "UTC": 0, "IST" : 5.5}
         if tz in tz_map:
             return timezone(timedelta(hours=tz_map[tz]))
         if tz.startswith("UTC"):
