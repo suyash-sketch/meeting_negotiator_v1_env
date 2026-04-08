@@ -350,7 +350,7 @@ class MeetingNegotiatorV1Environment(Environment):
             # === PHASE 1: THE TRIPLE DOMINO ===
             # Domino 1: Blocks 14:00Z. MUST move to 16:00Z (only open slot left for Alice+Bob).
             ScheduledEvent(
-                event_id="EVT-BOB-URGENT",
+                event_id="EVT-ALICE-BOB-URGENT",
                 attendees=["Alice", "Bob"],
                 start_time_utc="2026-01-15T14:00Z",
                 duration_minutes=60,
@@ -358,7 +358,7 @@ class MeetingNegotiatorV1Environment(Environment):
             ),
             # Domino 2: Blocks 16:00Z. MUST move to 17:00Z.
             ScheduledEvent(
-                event_id="EVT-ALICE-URGENT", 
+                event_id="EVT-ALICE-DEV-URGENT", 
                 attendees=["Alice", "Dev"],
                 start_time_utc="2026-01-15T16:00Z",
                 duration_minutes=60,
