@@ -49,6 +49,22 @@ The environment supports scenario selection by name in `reset(scenario_id=...)`.
 
 ![Possible Solution](hard_task_solution.png)
 
+## Step 1: Move Alice+Dev: EVT-ALICE-DEV-URGENT with Dev to 17:00 UTC
+Due to rescheduling of EVT-ALICE-DEV-URGENT, Dev's low priority event(EVT-DEV-LOW) is automatically bumped and enters into pending requests
+
+## Step 2: Now the 16:00 block is free for Alice's & Bob's Meeting, Move Alice+Bob Meeting: EVT-ALICE-BOB-URGENT with Bob to 16:00 UTC
+
+## Step 3: Now moving EVT-ALICE-DEV-URGENT to 17:00 and moving EVT-ALICE-BOB-URGENT to 16:00 creates a free slot for REQ-URGENT-ALL-HANDS at 14:00, Schedule REQ-URGENT-ALL-HANDS at 14:00 UTC
+### (Note: This a -0.15 unavoidable preference penalty since it is outside all three attendees' preferred hours, which is expected by design) 
+
+## Step 4: Dev's bumped meeting must be rescheduled before its 18:00Z deadline. Dev is wide open in the morning
+Schedule REQ-BUMPED-DEV to 9:00 UTC
+
+## Step 5: Schedule REQ-CTO-SYNC at 21:00 UTC, this satisfies Alice and CEO but not CTO (unavoidable thus a preference penalty of -0.05)
+
+## TOTAL PREFERENC PENALTY = -0.15 + (-0.05) => -0.20
+## FINAL SCORE = 1 - 0.20 = 0.80
+
 All dates are set to **January 15, 2026** to avoid DST ambiguity.
 
 ## Quick Start
