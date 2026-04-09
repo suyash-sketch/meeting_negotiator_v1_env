@@ -34,6 +34,8 @@ The environment supports scenario selection by name in `reset(scenario_id=...)`.
 | `HARD` | The Zero-Sum Domino Cascade | 🔴 Hard | `0.80` | Requires reverse-chronological spatial reasoning, fractional timezone math, and dodging a chronological decoy trap. |
 
 > *Note: All dates are set to **January 15, 2026** to avoid DST ambiguity.*
+>
+> *Deadline semantics: a meeting must fully finish by its `deadline_utc`, not merely start before it.*
 
 ---
 
@@ -50,7 +52,7 @@ To achieve the maximum possible score of `0.80`, the agent must execute the foll
 * **Step 1:** Move `EVT-ALICE-DEV-URGENT` from `16:00 UTC` to `17:00 UTC`. Because this is an urgent meeting, Dev's low-priority event (`EVT-DEV-LOW`) is automatically bumped and enters the pending requests queue.
 * **Step 2:** The `16:00` block is now free. Move `EVT-ALICE-BOB-URGENT` to `16:00 UTC`.
 * **Step 3:** The cascade is complete. The `14:00` slot is now completely free. Schedule `REQ-URGENT-ALL-HANDS` at `14:00 UTC`. *(Note: This incurs an unavoidable -0.15 preference penalty since it is outside all three attendees' preferred hours, which is expected by design).*
-* **Step 4:** Dev's bumped meeting must be rescheduled before its `18:00Z` deadline. Dev is wide open in the morning. Schedule `REQ-BUMPED-DEV` to `09:00 UTC`.
+* **Step 4:** Dev's bumped meeting must be fully completed by its `18:00Z` deadline. Dev is wide open in the morning. Schedule `REQ-BUMPED-DEV` to `09:00 UTC`.
 * **Step 5:** Schedule `REQ-CTO-SYNC` at `21:00 UTC`. This safely avoids the chronological decoy trap. It satisfies Alice and the CEO, but misses the CTO's preference *(an unavoidable -0.05 penalty).*
 
 **Final Score Calculation:**
@@ -94,7 +96,7 @@ The environment provides **dense, penalty-based rewards across the trajectory**,
 | Violation / Condition                        | Penalty |
 | -------------------------------------------- | ------- |
 | Request left unscheduled                     | -0.40   |
-| Meeting misses deadline                      | -0.20   |
+| Meeting finishes after its deadline         | -0.20   |
 | Scheduled outside working hours              | -0.25   |
 | Double-booked / conflict                     | -0.30   |
 | Priority inversion (bumping higher priority) | -0.15   |
@@ -114,6 +116,8 @@ The environment provides **dense, penalty-based rewards across the trajectory**,
   * successful scheduling
   * respecting priority tier
   * early deadline satisfaction
+
+The inference baseline treats `0.80` as a successful `HARD` run because that is the documented optimal score for the scenario.
 
 ---
 
