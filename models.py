@@ -54,7 +54,10 @@ class MeetingRequest(BaseModel):
     priority: Literal["low", "medium", "high", "urgent"] = Field(
         ..., description="The priority level of the requested meeting."
     )
-    deadline_utc: str = Field(..., description="The meeting MUST be scheduled to start before this UTC time.")
+    deadline_utc: str = Field(
+        ...,
+        description="The meeting MUST finish by this UTC time.",
+    )
     title: str = Field(default="", description="Short human-readable title for the request.")
 
 
