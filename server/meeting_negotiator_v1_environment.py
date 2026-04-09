@@ -665,7 +665,7 @@ class MeetingNegotiatorV1Environment(Environment):
             start_dt = self._parse_utc(event.start_time_utc)
             end_dt = start_dt + timedelta(minutes=event.duration_minutes)
 
-            if start_dt > self._parse_utc(request.deadline_utc):
+            if end_dt > self._parse_utc(request.deadline_utc):
                 penalty += SCORE_PENALTIES["deadline"]
 
             for attendee in request.attendees:
