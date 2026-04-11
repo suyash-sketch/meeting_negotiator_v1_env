@@ -36,6 +36,7 @@ API_BASE_URL = os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
 MODEL_NAME = os.getenv("MODEL_NAME") or "openai/gpt-oss-120b:groq"
 API_KEY = os.getenv("API_KEY") or os.getenv("HF_TOKEN")
 IMAGE_NAME = os.getenv("IMAGE_NAME") or os.getenv("LOCAL_IMAGE_NAME")
+SEED = int(os.getenv("SEED", "0")) or None
 
 llm_client = AsyncOpenAI(
     base_url=API_BASE_URL,
@@ -75,11 +76,25 @@ def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> No
 
 def _sanitize_command(raw: str) -> str:
     raw = (raw or "").strip().lower()
-    if raw == "checkavailability" or raw == "check_availability": return "CheckAvailability"
-    if raw == "schedulenew" or raw == "schedule_new": return "ScheduleNew"
-    if raw == "rescheduleexisting" or raw == "reschedule_existing": return "RescheduleExisting"
-    if raw == "submitfinalcalendar" or raw == "submit_final_calendar": return "SubmitFinalCalendar"
-    return "SubmitFinalCalendar"
+    mapping = {
+        "checkavailability":    "CheckAvailability",
+        "check_availability":   "CheckAvailability",
+        "schedulenew":          "ScheduleNew",
+        "schedule_new":         "ScheduleNew",
+        "rescheduleexisting":   "RescheduleExisting",
+        "reschedule_existing":  "RescheduleExisting",
+        "submitfinalcalendar":  "SubmitFinalCalendar",
+        "submit_final_calendar":"SubmitFinalCalendar",
+        "inspectparticipant":   "InspectParticipant",
+        "inspect_participant":  "InspectParticipant",
+        "listconflicts":        "ListConflicts",
+        "list_conflicts":       "ListConflicts",
+        "getpolicy":            "GetPolicy",
+        "get_policy":           "GetPolicy",
+        "undolastaction":       "UndoLastAction",
+        "undo_last_action":     "UndoLastAction",
+    }
+    return mapping.get(raw, "SubmitFinalCalendar")
 
 def _sanitize_optional(value: Optional[str]) -> Optional[str]:
     if value is None:
@@ -101,7 +116,7 @@ def _parse_time(value: str) -> time:
     return datetime.strptime(value, "%H:%M").time()
 
 def _tz_offset(tz: str) -> timezone:
-    tz_map = {"PST": -8, "EST": -5, "GMT": 0, "UTC": 0}
+    tz_map = {"PST": -8, "CST": -6, "EST": -5, "GMT": 0, "UTC": 0, "IST": 5.5}
     if tz in tz_map: return timezone(timedelta(hours=tz_map[tz]))
     if tz.startswith("UTC"):
         raw = tz[3:]
@@ -218,19 +233,30 @@ def _obs_to_prompt(obs, action_history: List[str]) -> str:
         PENDING REQUESTS (you must schedule all of these):
         {pending}
 
-        RULES:
-        1. THE BUMP MECHANIC: You can ONLY bump meetings of LOWER priority. If a slot is blocked by a lower-priority meeting, directly use ScheduleNew to bump it.
-        2. EQUAL OR HIGHER PRIORITY (CRITICAL): You CANNOT bump meetings of equal or higher priority. If blocked by one, you MUST use RescheduleExisting to safely move the blocker to a valid, open slot before its deadline.
-        3. If Last Feedback says "Slot available", DO NOT check it again. Schedule it immediately.
-        4. Call SubmitFinalCalendar only when 'Pending requests' is empty.
-        5. All times must be UTC in format "YYYY-MM-DDTHH:MMZ".
-        6. ScheduleNew and RescheduleExisting MUST have a valid target_id.
+        COMMANDS (use exactly as shown):
+        - CheckAvailability  target_id=<request_id>   proposed_start_utc=<slot>  → probe slot, no commitment
+        - ScheduleNew        target_id=<request_id>   proposed_start_utc=<slot>  → schedule pending request
+        - RescheduleExisting target_id=<event_id>     proposed_start_utc=<slot>  → move scheduled event
+        - InspectParticipant target_id=<name>                                    → reveal hidden preferences
+        - ListConflicts      target_id=<request_id>   proposed_start_utc=<slot>  → show conflicts + bumpability
+        - GetPolicy                                                               → print scoring rules
+        - UndoLastAction                                                          → undo last schedule/reschedule
+        - SubmitFinalCalendar                                                     → finalize (only when ALL pending = empty)
 
-        CRITICAL: Output ONLY a valid JSON object matching this exact schema. You MUST fill out the "thought" key first to plan your temporal math.
+        RULES:
+        1. BUMP MECHANIC: ScheduleNew/RescheduleExisting with priority X auto-bumps events with priority < X.
+        2. EQUAL OR HIGHER priority blockers CANNOT be bumped. Use RescheduleExisting to move the blocker first.
+        3. If Last Feedback says 'Slot available', DO NOT check again — schedule immediately.
+        4. Call SubmitFinalCalendar ONLY when 'Pending requests' is empty.
+        5. All times must be UTC: "YYYY-MM-DDTHH:MMZ".
+        6. ScheduleNew and RescheduleExisting MUST have a valid target_id and proposed_start_utc.
+        7. InspectParticipant BEFORE scheduling on HARD — preferred hours are hidden.
+
+        CRITICAL: Output ONLY a valid JSON object matching this exact schema:
         {{
-          "thought": "Write 1-2 sentences calculating working hours and explaining why you chose this action and time.",
-          "command": "CheckAvailability|ScheduleNew|RescheduleExisting|SubmitFinalCalendar", 
-          "target_id": "<id or null>", 
+          "thought": "1-2 sentences: timezone math + reason for this action + time.",
+          "command": "<one of the 8 commands above>",
+          "target_id": "<id or null>",
           "proposed_start_utc": "<YYYY-MM-DDTHH:MMZ or null>"
         }}
 """
@@ -283,7 +309,7 @@ async def call_llm_with_retry(prompt: str) -> dict:
 # ============================================================================
 
 async def run_episode(env: MeetingNegotiatorV1Env, episode_label: str):
-    result = await env.reset(scenario_id=episode_label)
+    result = await env.reset(scenario_id=episode_label, seed=SEED)
     obs = result.observation
     done = result.done
 
@@ -344,34 +370,73 @@ async def run_episode(env: MeetingNegotiatorV1Env, episode_label: str):
     score = float(obs.score) if obs.score is not None else 0.01
 
     # HARD has unavoidable preference penalties, so the documented optimal score is 0.80.
-    threshold = 0.80 if episode_label == "HARD" else SUCCESS_SCORE_THRESHOLD
+    threshold = 0.80 if episode_label.startswith("HARD") else SUCCESS_SCORE_THRESHOLD
     success = score >= threshold
 
     # MANDATORY: Log end of episode
     log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
 
 
+
+ALL_SCENARIOS = [
+    "EASY", "EASY_B", "EASY_C",
+    "MEDIUM", "MEDIUM_B", "MEDIUM_C",
+    "HARD", "HARD_B", "HARD_C",
+]
+
+TIER_SCENARIOS = {
+    "easy":   ["EASY", "EASY_B", "EASY_C"],
+    "medium": ["MEDIUM", "MEDIUM_B", "MEDIUM_C"],
+    "hard":   ["HARD", "HARD_B", "HARD_C"],
+}
+
+
 async def main():
-    # 1. Dynamically connect to the environment the way the Grader expects
+    import argparse
+    parser = argparse.ArgumentParser(description="Meeting Negotiator V1 inference runner.")
+    parser.add_argument(
+        "--scenarios", nargs="+", default=None, metavar="ID",
+        help="Explicit scenario IDs to run (e.g. EASY HARD_C). Default: all 9.",
+    )
+    parser.add_argument(
+        "--tier", choices=["easy", "medium", "hard"], default=None,
+        help="Run all scenarios for a single tier.",
+    )
+    parser.add_argument(
+        "--space", default=None,
+        help="HF Space base URL (e.g. https://user-meeting-negotiator-v1.hf.space).",
+    )
+    args, _ = parser.parse_known_args()
+
+    # Resolve which scenarios to run
+    if args.scenarios:
+        scenarios = [s.upper() for s in args.scenarios]
+    elif args.tier:
+        scenarios = TIER_SCENARIOS[args.tier]
+    else:
+        scenarios = ALL_SCENARIOS
+
+    # Resolve env connection
     if IMAGE_NAME:
         print(f"[DEBUG] Booting environment from docker image: {IMAGE_NAME}", flush=True)
         env = await MeetingNegotiatorV1Env.from_docker_image(IMAGE_NAME)
     else:
-        fallback_url = os.getenv("ENV_BASE_URL", "http://localhost:8000")
-        print(f"[DEBUG] No IMAGE_NAME found. Connecting to URL: {fallback_url}", flush=True)
-        env = MeetingNegotiatorV1Env(base_url=fallback_url)
+        base_url = args.space or os.getenv("ENV_BASE_URL", "http://localhost:8000")
+        print(f"[DEBUG] Connecting to: {base_url}", flush=True)
+        env = MeetingNegotiatorV1Env(base_url=base_url)
+
+    print(f"[DEBUG] Running {len(scenarios)} scenario(s): {', '.join(scenarios)}", flush=True)
 
     try:
-        # 2. Run all three tasks
-        await run_episode(env, "EASY")
-        await run_episode(env, "MEDIUM")
-        await run_episode(env, "HARD") 
+        for scenario_id in scenarios:
+            await run_episode(env, scenario_id)
     finally:
-        # 3. Safely close the environment (Crucial for shutting down the Docker container)
         try:
             await env.close()
         except Exception as e:
-            print(f"[DEBUG] env.close() error (container cleanup): {e}", flush=True)
+            print(f"[DEBUG] env.close() error: {e}", flush=True)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
+

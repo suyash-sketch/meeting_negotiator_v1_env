@@ -10,19 +10,18 @@ from typing import Dict
 
 from openenv.core import EnvClient
 from openenv.core.client_types import StepResult
-from openenv.core.env_server.types import State
 try:
-    from .models import MeetingNegotiatorV1Action, MeetingNegotiatorV1Observation
+    from .models import MeetingNegotiatorV1Action, MeetingNegotiatorV1Observation, MeetingNegotiatorV1State
 except ImportError:
     import os as _os
     import sys as _sys
     _pkg_dir = _os.path.dirname(_os.path.abspath(__file__))
     if _pkg_dir not in _sys.path:
         _sys.path.insert(0, _pkg_dir)
-    from models import MeetingNegotiatorV1Action, MeetingNegotiatorV1Observation
+    from models import MeetingNegotiatorV1Action, MeetingNegotiatorV1Observation, MeetingNegotiatorV1State
 
 class MeetingNegotiatorV1Env(
-    EnvClient[MeetingNegotiatorV1Action, MeetingNegotiatorV1Observation, State]
+    EnvClient[MeetingNegotiatorV1Action, MeetingNegotiatorV1Observation, MeetingNegotiatorV1State]
 ):
     """
     Client for the Meeting Negotiator V1 Environment.
@@ -52,6 +51,12 @@ class MeetingNegotiatorV1Env(
             score=obs_data.get("score"),
             reward=obs_data.get("reward", payload.get("reward", 0.0)),
             done=obs_data.get("done", payload.get("done", False)),
+            last_reward_components=obs_data.get("last_reward_components", {}),
+            reward_breakdown=obs_data.get("reward_breakdown"),
+            available_commands=obs_data.get("available_commands", []),
+            investigation_budget_remaining=obs_data.get("investigation_budget_remaining", 0),
+            total_requests_seen=obs_data.get("total_requests_seen", 0),
+            requests_completed=obs_data.get("requests_completed", 0),
         )
 
         return StepResult(
@@ -60,8 +65,21 @@ class MeetingNegotiatorV1Env(
             done=payload.get("done", observation.done),
         )
 
-    def _parse_state(self, payload: Dict) -> State:
-        return State(
+    def _parse_state(self, payload: Dict) -> MeetingNegotiatorV1State:
+        return MeetingNegotiatorV1State(
             episode_id=payload.get("episode_id"),
             step_count=payload.get("step_count", 0),
+            current_time_utc=payload.get("current_time_utc", ""),
+            scenario_id=payload.get("scenario_id", ""),
+            seed=payload.get("seed"),
+            max_turns=payload.get("max_turns", 15),
+            turn_count=payload.get("turn_count", 0),
+            is_done=payload.get("is_done", False),
+            total_reward=payload.get("total_reward", 0.0),
+            score=payload.get("score"),
+            investigation_budget=payload.get("investigation_budget", 0),
+            investigation_used=payload.get("investigation_used", 0),
+            inspected_participants=payload.get("inspected_participants", []),
+            total_requests_seen=payload.get("total_requests_seen", 0),
+            requests_completed=payload.get("requests_completed", 0),
         )

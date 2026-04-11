@@ -1,14 +1,29 @@
 spec_version: 1
 name: meeting_negotiator_v1
+version: 1.0.0
+description: >
+  Multi-step calendar negotiation RL environment — agents must schedule meetings
+  across timezones, manage priority bumps, respect deadlines and preferences,
+  and handle dynamic follow-up requests. 9 scenarios across 3 difficulty tiers
+  with seed-based anti-memorization randomization.
 type: space
 runtime: fastapi
 app: server.app:app
 port: 8000
+tags:
+  - openenv
+  - scheduling
+  - calendar
+  - real-world
+  - negotiation
 
 tasks:
   - id: "EASY"
-    description: "The Empty Slate - 1:1 meeting with simple working hour constraints."
+    description: "Basic scheduling with simple working hour constraints. Scenarios: EASY, EASY_B, EASY_C."
+    grader: server.graders.grade_easy
   - id: "MEDIUM"
-    description: "The Greedy Preference Trap - Multi-timezone coordination optimizing for soft preferences."
+    description: "Multi-timezone coordination with preference traps and dynamic follow-ups. Scenarios: MEDIUM, MEDIUM_B, MEDIUM_C."
+    grader: server.graders.grade_medium
   - id: "HARD"
-    description: "The Deadline Trap - Complex priority cascade, bumping, and strict deadline management."
+    description: "Priority cascades, bump chains, partial observability, trap actions, and emergency follow-ups. Scenarios: HARD, HARD_B, HARD_C."
+    grader: server.graders.grade_hard
