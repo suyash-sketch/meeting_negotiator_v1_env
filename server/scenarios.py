@@ -214,18 +214,20 @@ def scenario_medium() -> ScenarioSpec:
 
 def scenario_medium_b() -> ScenarioSpec:
     """MEDIUM_B: The Blocker Sandwich.
-    An urgent 3-party meeting must fit in the PRE-BLOCK window (09:00-14:00Z).
-    Both blockers occupy 14:00-16:00Z (high) and 16:00-17:00Z (medium).
-    Greedy agents try 14:00Z and get blocked by Alice's high-priority block.
-    The optimal path is to inspect the calendar, spot the 09:00-14:00Z gap,
-    and schedule there. All three participants are available from 09:00-14:00Z.
-    Optimal: CheckAvailability/ListConflicts at 13:00Z + ScheduleNew + Submit.
+    A multiday urgent 3-party meeting. Day 1 has tempting partial gaps, but
+    no valid full overlap for all three attendees. The real solution is on day
+    2, where a low-priority placeholder must be displaced and then recovered at
+    its only remaining slot. Agents that only search the current day waste
+    turns on impossible same-day slots.
+
+    Optimal: ListConflicts on the day-2 slot + ScheduleNew(bump low hold) +
+    ScheduleNew(recover low hold) + Submit.
     """
     participants = {
         "Alice": Participant(
-            name="Alice", timezone="GMT",
+            name="Alice", timezone="EST",
             working_hours=["09:00-18:00"],
-            preferred_hours=["13:00-15:00"],
+            preferred_hours=["09:00-11:00"],
         ),
         "Bob": Participant(
             name="Bob", timezone="GMT",
@@ -247,17 +249,35 @@ def scenario_medium_b() -> ScenarioSpec:
             event_id="EVT-BOB-BLOCK", attendees=["Bob"],
             start_time_utc="2026-01-15T16:00Z", duration_minutes=60, priority="medium",
         ),
+        ScheduledEvent(
+            event_id="EVT-DEV-DAY1-BLOCK", attendees=["Dev"],
+            start_time_utc="2026-01-15T13:00Z", duration_minutes=60, priority="medium",
+        ),
+        ScheduledEvent(
+            event_id="EVT-DAY2-HOLD", attendees=["Alice", "Bob"],
+            start_time_utc="2026-01-16T14:00Z", duration_minutes=60, priority="low",
+            request_id="REQ-MEDB-HOLD",
+        ),
+        ScheduledEvent(
+            event_id="EVT-BOB-DAY2-BLOCK", attendees=["Bob"],
+            start_time_utc="2026-01-16T16:00Z", duration_minutes=60, priority="medium",
+        ),
     ]
     req = MeetingRequest(
         request_id="REQ-MEDB-1", attendees=["Alice", "Bob", "Dev"],
         duration_minutes=60, priority="urgent",
-        deadline_utc="2026-01-15T19:00Z", title="Emergency Sync",
+        deadline_utc="2026-01-16T15:00Z", title="Emergency Sync",
+    )
+    req_hold = MeetingRequest(
+        request_id="REQ-MEDB-HOLD", attendees=["Alice", "Bob"],
+        duration_minutes=60, priority="low",
+        deadline_utc="2026-01-16T16:00Z", title="Placeholder Hold",
     )
     return ScenarioSpec(
         scenario_id="MEDIUM_B", description="The Blocker Sandwich",
         current_time_utc="2026-01-15T13:00Z",
         participants=participants, calendar_state=calendar_state,
-        pending_requests=[req], all_requests=[req],
+        pending_requests=[req], all_requests=[req, req_hold],
         max_turns=10,
     )
 
@@ -265,9 +285,11 @@ def scenario_medium_b() -> ScenarioSpec:
 def scenario_medium_c() -> ScenarioSpec:
     """MEDIUM_C: The Bump Chain.
     An urgent meeting must be scheduled at 14:00 UTC, but Bob already has a
-    low-priority event there. Agent must ScheduleNew (bumping the low event),
-    then re-slot the bumped event before its 17:00 deadline.
-    Optimal: ScheduleNew (bump) + ScheduleNew (re-slot bumped) + Submit.
+    low-priority event there. That bump is only the first half of the task:
+    the displaced event cannot be recovered later the same day because of Bob's
+    afternoon blockers, so it must be moved to the unique next-morning slot.
+
+    Optimal: ScheduleNew (bump) + ScheduleNew (recover next morning) + Submit.
     """
     participants = {
         "Alice": Participant(
@@ -286,6 +308,14 @@ def scenario_medium_c() -> ScenarioSpec:
         start_time_utc="2026-01-15T14:00Z", duration_minutes=60, priority="low",
         request_id="REQ-BOB-LOW",
     )
+    late_block = ScheduledEvent(
+        event_id="EVT-BOB-LATE", attendees=["Bob"],
+        start_time_utc="2026-01-15T15:00Z", duration_minutes=120, priority="medium",
+    )
+    next_day_block = ScheduledEvent(
+        event_id="EVT-BOB-NEXTDAY", attendees=["Bob"],
+        start_time_utc="2026-01-16T10:00Z", duration_minutes=420, priority="medium",
+    )
     req_urgent = MeetingRequest(
         request_id="REQ-MEDC-URG", attendees=["Alice", "Bob"],
         duration_minutes=60, priority="urgent",
@@ -294,12 +324,12 @@ def scenario_medium_c() -> ScenarioSpec:
     req_low = MeetingRequest(
         request_id="REQ-BOB-LOW", attendees=["Bob"],
         duration_minutes=60, priority="low",
-        deadline_utc="2026-01-15T17:00Z", title="Bob Background",
+        deadline_utc="2026-01-16T10:00Z", title="Bob Background",
     )
     return ScenarioSpec(
         scenario_id="MEDIUM_C", description="The Bump Chain",
         current_time_utc="2026-01-15T12:00Z",
-        participants=participants, calendar_state=[existing],
+        participants=participants, calendar_state=[existing, late_block, next_day_block],
         pending_requests=[req_urgent], all_requests=[req_urgent, req_low],
         max_turns=10,
     )
@@ -391,26 +421,36 @@ def scenario_hard() -> ScenarioSpec:
 
 def scenario_hard_b() -> ScenarioSpec:
     """HARD_B: The VIP No-Bump Gridlock.
-    CEO has an urgent 3-hour VIP block that CANNOT be bumped. Alice has a
-    high-priority training block. The agent must find a slot that works around
-    both blockers without violating the no-bump rule, across EST and GMT.
-    Preferred hours are HIDDEN (HARD tier). Optimal: 2 investigates + 2 schedules.
+    A multiday executive scheduling puzzle. Sprint Close must happen on day 1,
+    but Alice's training occupies the only feasible day-1 slot. Board Prep
+    must happen on day 2 before the CEO's investor review. The agent must
+    inspect, move the training block across days, then place both requests in
+    the correct order.
+
+    Preferred hours are HIDDEN (HARD tier). Optimal: inspect all principals,
+    reschedule Alice's blocker to day 2, place Sprint Close on day 1, then
+    place Board Prep at the unique day-2 pre-investor slot.
     """
     participants = {
         "CEO": Participant(
             name="CEO", timezone="EST",
             working_hours=["08:00-17:00"],
-            preferred_hours=["09:00-11:00"],
+            preferred_hours=["09:00-10:00"],
         ),
         "Alice": Participant(
             name="Alice", timezone="EST",
             working_hours=["09:00-17:00"],
-            preferred_hours=["14:00-16:00"],
+            preferred_hours=["11:00-13:00"],
         ),
         "Bob": Participant(
             name="Bob", timezone="GMT",
             working_hours=["08:00-18:00"],
-            preferred_hours=["10:00-12:00"],
+            preferred_hours=["16:00-17:00"],
+        ),
+        "Legal": Participant(
+            name="Legal", timezone="UTC",
+            working_hours=["16:00-17:00"],
+            preferred_hours=["16:00-17:00"],
         ),
     }
     calendar_state = [
@@ -419,23 +459,31 @@ def scenario_hard_b() -> ScenarioSpec:
             start_time_utc="2026-01-15T14:00Z", duration_minutes=180, priority="urgent",
         ),
         ScheduledEvent(
+            event_id="EVT-CEO-INVESTOR", attendees=["CEO"],
+            start_time_utc="2026-01-16T15:00Z", duration_minutes=120, priority="urgent",
+        ),
+        ScheduledEvent(
             event_id="EVT-ALICE-TRAIN", attendees=["Alice"],
             start_time_utc="2026-01-15T16:00Z", duration_minutes=120, priority="high",
+        ),
+        ScheduledEvent(
+            event_id="EVT-BOB-CLIENT", attendees=["Bob"],
+            start_time_utc="2026-01-15T14:00Z", duration_minutes=120, priority="medium",
         ),
     ]
     req1 = MeetingRequest(
         request_id="REQ-HARDB-1", attendees=["CEO", "Alice", "Bob"],
         duration_minutes=60, priority="urgent",
-        deadline_utc="2026-01-15T20:00Z", title="Board Prep",
+        deadline_utc="2026-01-16T15:00Z", title="Board Prep",
     )
     req2 = MeetingRequest(
-        request_id="REQ-HARDB-2", attendees=["Alice", "Bob"],
+        request_id="REQ-HARDB-2", attendees=["Alice", "Bob", "Legal"],
         duration_minutes=60, priority="high",
-        deadline_utc="2026-01-15T18:00Z", title="Sprint Close",
+        deadline_utc="2026-01-15T17:00Z", title="Sprint Close",
     )
     return ScenarioSpec(
         scenario_id="HARD_B", description="The VIP No-Bump Gridlock",
-        current_time_utc="2026-01-15T08:00Z",
+        current_time_utc="2026-01-15T12:00Z",
         participants=participants, calendar_state=calendar_state,
         pending_requests=[req1, req2], all_requests=[req1, req2],
         max_turns=14,
@@ -444,11 +492,14 @@ def scenario_hard_b() -> ScenarioSpec:
 
 def scenario_hard_c() -> ScenarioSpec:
     """HARD_C: The Decoy Trap.
-    A low-priority decoy event sits at 15:00 UTC and can be bumped. However,
-    greedily scheduling REQ-TRAP there will block the CRITICAL REQ-REAL from
-    fitting later (Dev is blocked 14:00-16:00 UTC). The optimal path is to
-    recognize the downstream consequence of the decoy slot and either leave it
-    or re-slot the decoy first. Preferred hours are HIDDEN (HARD tier).
+    A multiday downstream-consequence puzzle. The urgent real review has only
+    one valid slot on day 2. The tempting high-priority trap request can also
+    fit in that slot, so greedily taking the prettier day-2 placement ruins the
+    urgent request. The right move is to bump the day-1 decoy, place the trap
+    on day 1, reserve the unique day-2 slot for the urgent review, then recover
+    the bumped placeholder later.
+
+    Preferred hours are HIDDEN (HARD tier).
     """
     participants = {
         "Alice": Participant(
@@ -472,9 +523,21 @@ def scenario_hard_c() -> ScenarioSpec:
         start_time_utc="2026-01-15T15:00Z", duration_minutes=60, priority="low",
         request_id="REQ-DECOY",
     )
+    bob_day1_early = ScheduledEvent(
+        event_id="EVT-BOB-EARLY", attendees=["Bob"],
+        start_time_utc="2026-01-15T13:00Z", duration_minutes=120, priority="urgent",
+    )
     blocker = ScheduledEvent(
         event_id="EVT-BLOCKER", attendees=["Dev"],
         start_time_utc="2026-01-15T14:00Z", duration_minutes=120, priority="urgent",
+    )
+    bob_day1_block = ScheduledEvent(
+        event_id="EVT-BOB-LATE", attendees=["Bob"],
+        start_time_utc="2026-01-15T16:00Z", duration_minutes=60, priority="urgent",
+    )
+    alice_day2_block = ScheduledEvent(
+        event_id="EVT-ALICE-DAY2", attendees=["Alice"],
+        start_time_utc="2026-01-16T15:00Z", duration_minutes=120, priority="high",
     )
     req_trap = MeetingRequest(
         request_id="REQ-HARDC-TRAP", attendees=["Alice", "Bob"],
@@ -484,17 +547,18 @@ def scenario_hard_c() -> ScenarioSpec:
     req_real = MeetingRequest(
         request_id="REQ-HARDC-REAL", attendees=["Alice", "Bob", "Dev"],
         duration_minutes=60, priority="urgent",
-        deadline_utc="2026-01-15T18:00Z", title="Critical Review",
+        deadline_utc="2026-01-16T15:00Z", title="Critical Review",
     )
     req_decoy = MeetingRequest(
         request_id="REQ-DECOY", attendees=["Alice", "Bob"],
         duration_minutes=60, priority="low",
-        deadline_utc="2026-01-15T17:00Z", title="Placeholder",
+        deadline_utc="2026-01-16T18:00Z", title="Placeholder",
     )
     return ScenarioSpec(
         scenario_id="HARD_C", description="The Decoy Trap",
         current_time_utc="2026-01-15T12:00Z",
-        participants=participants, calendar_state=[decoy, blocker],
+        participants=participants,
+        calendar_state=[decoy, bob_day1_early, blocker, bob_day1_block, alice_day2_block],
         pending_requests=[req_trap, req_real],
         all_requests=[req_trap, req_real, req_decoy],
         max_turns=14,
