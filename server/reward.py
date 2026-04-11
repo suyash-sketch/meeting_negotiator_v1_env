@@ -1,6 +1,6 @@
 """Decomposed reward computation for Meeting Negotiator V1.
 
-7 named components, max 1.00:
+9 named components, max 1.00:
 
   1. COMPLETION        (0.35) — all requests scheduled
   2. DEADLINE          (0.20) — meetings finish before deadline
@@ -9,6 +9,8 @@
   5. CONFLICTS         (0.10) — no double-bookings
   6. EFFICIENCY        (0.05) — low step count
   7. INVESTIGATION     (0.05) — investigated before acting (HARD only)
+  8. STABILITY         (penalty) — harmful transitions reduce score
+  9. RECOVERY          (bonus) — explicit recovery wins back some trust
 
 All deterministic. No model loading. Perfect run → 0.99.
 """
@@ -125,6 +127,10 @@ def compute_final_score(
     max_turns: int,
     inspected_participants: Optional[List[str]] = None,
     scenario_id: str = "",
+    system_state: str = "stable",
+    escalation_budget_remaining: int = 0,
+    triggered_followups: Optional[List[str]] = None,
+    resolved_recovery_requests: Optional[List[str]] = None,
 ) -> Tuple[float, Dict[str, float]]:
     """Compute the final episode score with a full decomposition.
 
@@ -248,6 +254,22 @@ def compute_final_score(
     else:
         investigation = W_INVESTIGATION  # full credit for non-hard tasks
 
+    # ── 8. STABILITY PENALTY ──────────────────────────────────────
+    followup_count = len(triggered_followups or [])
+    stability_penalty = 0.0
+    if system_state == "strained":
+        stability_penalty = 0.04
+    elif system_state == "recovery_needed":
+        stability_penalty = 0.07
+    elif system_state == "escalated":
+        stability_penalty = 0.10
+    stability_penalty += min(0.06, followup_count * 0.02)
+    if escalation_budget_remaining < 0:
+        stability_penalty += min(0.04, abs(escalation_budget_remaining) * 0.02)
+
+    # ── 9. RECOVERY CREDIT ────────────────────────────────────────
+    recovery_credit = min(0.05, len(resolved_recovery_requests or []) * 0.025)
+
     # ── TOTAL ──────────────────────────────────────────────────────
     breakdown = {
         "completion": round(completion, 4),
@@ -257,9 +279,15 @@ def compute_final_score(
         "conflict_avoidance": round(conflicts, 4),
         "efficiency": round(efficiency, 4),
         "investigation_discipline": round(investigation, 4),
+        "stability_penalty": round(-stability_penalty, 4),
+        "recovery_credit": round(recovery_credit, 4),
     }
 
-    total = sum(breakdown.values())
+    total = (
+        completion + deadline + working_hours + preference
+        + conflicts + efficiency + investigation
+        - stability_penalty + recovery_credit
+    )
     score = round(min(0.99, max(0.01, total)), 4)
 
     return score, breakdown

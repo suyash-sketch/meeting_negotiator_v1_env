@@ -100,6 +100,8 @@ class MeetingNegotiatorV1Environment(Environment):
         self._hidden_prefs: Dict[str, List[str]] = {}
         self._dynamic_followups: List[MeetingRequest] = []
         self._followup_trigger_step: int = 0
+        self._protected_event_ids: List[str] = []
+        self._recovery_specs: Dict[str, Dict[str, Any]] = {}
 
     def reset(self, scenario_id: Optional[str] = None, seed: Optional[int] = None) -> MeetingNegotiatorV1Observation:
         self._reset_count += 1
@@ -136,8 +138,10 @@ class MeetingNegotiatorV1Environment(Environment):
         # Dynamic followups
         self._dynamic_followups = list(scenario.dynamic_followups or [])
         self._followup_trigger_step = max(3, scenario.max_turns // 2)
+        self._protected_event_ids, self._recovery_specs = self._configure_operational_mechanics(scenario.scenario_id)
 
         inv_budget = len(pending_requests) + (3 if is_hard else 1)
+        escalation_budget = 2 if is_hard else 1
 
         self._state = MeetingNegotiatorV1State(
             episode_id=str(uuid4()),
@@ -162,6 +166,9 @@ class MeetingNegotiatorV1Environment(Environment):
             last_action_snapshot=None,
             total_requests_seen=len(all_requests),
             requests_completed=0,
+            system_state="stable",
+            escalation_budget_remaining=escalation_budget,
+            protected_event_ids=list(self._protected_event_ids),
         )
 
         return self._build_observation(reward=0.0, done=False)
@@ -187,6 +194,7 @@ class MeetingNegotiatorV1Environment(Environment):
                 self._state.total_requests_seen += 1
             self._state.dynamic_requests_injected = len(self._dynamic_followups)
             feedback += f"[QUEUE UPDATE] {len(self._dynamic_followups)} new request(s) arrived. "
+            self._state.queue_warning = "New requests arrived mid-session."
 
         # Max turns check
         if self._state.turn_count >= self._state.max_turns and action.command != "SubmitFinalCalendar":
@@ -324,6 +332,14 @@ class MeetingNegotiatorV1Environment(Environment):
         snap = self._state.last_action_snapshot
         self._state.calendar_state = [ScheduledEvent(**e) for e in snap["calendar_state"]]
         self._state.pending_requests = [MeetingRequest(**r) for r in snap["pending_requests"]]
+        self._state.system_state = snap["system_state"]
+        self._state.escalation_budget_remaining = snap["escalation_budget_remaining"]
+        self._state.triggered_followups = list(snap["triggered_followups"])
+        self._state.resolved_recovery_requests = list(snap["resolved_recovery_requests"])
+        self._state.pending_recovery_request_ids = list(snap["pending_recovery_request_ids"])
+        self._state.last_transition = snap["last_transition"]
+        self._state.queue_warning = snap["queue_warning"]
+        self._state.state_transition_log = list(snap["state_transition_log"])
         self._state.undo_available = False
         self._state.last_action_snapshot = None
         rc["undo"] = -STEP_PENALTY
@@ -332,14 +348,16 @@ class MeetingNegotiatorV1Environment(Environment):
     def _get_policy_text(self) -> str:
         return (
             "SCORING POLICY:\n"
-            "Final score = sum of 7 components (max 1.0):\n"
+            "Final score = base components with stability penalties and recovery credit:\n"
             "  1. Completion (0.35): fraction of requests scheduled\n"
             "  2. Deadline Compliance (0.20): meetings finish before deadline\n"
             "  3. Working Hours (0.15): all within working hours\n"
             "  4. Preference Quality (0.10): preferred hours respected\n"
             "  5. Conflict Avoidance (0.10): no double-bookings\n"
             "  6. Efficiency (0.05): fewer steps = higher score\n"
-            "  7. Investigation Discipline (0.05): inspect before acting (HARD only)\n\n"
+            "  7. Investigation Discipline (0.05): inspect before acting (HARD only)\n"
+            "  8. Stability Penalty: harmful transitions reduce final score\n"
+            "  9. Recovery Credit: fixing recovery work restores some score\n\n"
             "PER-STEP PENALTIES:\n"
             f"  Step cost: -{STEP_PENALTY}\n"
             f"  Invalid action: -{INVALID_ACTION_PENALTY}\n"
@@ -371,6 +389,10 @@ class MeetingNegotiatorV1Environment(Environment):
             max_turns=self._state.max_turns,
             inspected_participants=self._state.inspected_participants,
             scenario_id=self._state.scenario_id,
+            system_state=self._state.system_state,
+            escalation_budget_remaining=self._state.escalation_budget_remaining,
+            triggered_followups=self._state.triggered_followups,
+            resolved_recovery_requests=self._state.resolved_recovery_requests,
         )
         self._state.score = score
         self._state.is_done = True
@@ -386,6 +408,14 @@ class MeetingNegotiatorV1Environment(Environment):
         self._state.last_action_snapshot = {
             "calendar_state": [e.model_dump() for e in self._state.calendar_state],
             "pending_requests": [r.model_dump() for r in self._state.pending_requests],
+            "system_state": self._state.system_state,
+            "escalation_budget_remaining": self._state.escalation_budget_remaining,
+            "triggered_followups": list(self._state.triggered_followups),
+            "resolved_recovery_requests": list(self._state.resolved_recovery_requests),
+            "pending_recovery_request_ids": list(self._state.pending_recovery_request_ids),
+            "last_transition": self._state.last_transition,
+            "queue_warning": self._state.queue_warning,
+            "state_transition_log": list(self._state.state_transition_log),
         }
         self._state.undo_available = True
 
@@ -485,6 +515,23 @@ class MeetingNegotiatorV1Environment(Environment):
         if bumped:
             feedback += f" Bumped lower-priority events: {', '.join(bumped)}."
 
+        harm_reward, harm_feedback, harm_rc = self._apply_post_action_transitions(
+            action_kind="schedule",
+            target_request=request,
+            bumped_ids=bumped,
+            start_dt=start_dt,
+        )
+        reward += harm_reward
+        rc.update(harm_rc)
+        if harm_feedback:
+            feedback += f" {harm_feedback}"
+
+        recovery_reward, recovery_feedback, recovery_rc = self._handle_recovery_resolution(request.request_id)
+        reward += recovery_reward
+        rc.update(recovery_rc)
+        if recovery_feedback:
+            feedback += f" {recovery_feedback}"
+
         return round(reward, 4), feedback, rc
 
     def _handle_reschedule_existing(
@@ -539,6 +586,17 @@ class MeetingNegotiatorV1Environment(Environment):
             feedback += f" Outside preferred hours: {', '.join(pref_violations)} (-{pv_penalty:.2f})."
         if bumped:
             feedback += f" Bumped lower-priority events: {', '.join(bumped)}."
+
+        harm_reward, harm_feedback, harm_rc = self._apply_post_action_transitions(
+            action_kind="reschedule",
+            target_event=event,
+            bumped_ids=bumped,
+            start_dt=start_dt,
+        )
+        reward += harm_reward
+        rc.update(harm_rc)
+        if harm_feedback:
+            feedback += f" {harm_feedback}"
 
         return round(reward, 4), feedback, rc
 
@@ -710,6 +768,180 @@ class MeetingNegotiatorV1Environment(Environment):
                     return req.deadline_utc
         return self._format_utc(self._parse_utc(self._state.current_time_utc) + timedelta(days=1))
 
+    def _configure_operational_mechanics(
+        self, scenario_id: str
+    ) -> Tuple[List[str], Dict[str, Dict[str, Any]]]:
+        scenario_key = (scenario_id or "").upper()
+        protected: List[str] = []
+        specs: Dict[str, Dict[str, Any]] = {}
+
+        if scenario_key == "MEDIUM_B":
+            protected = ["EVT-DAY2-HOLD"]
+            specs["REQ-MEDB-HOLD"] = {
+                "followup": MeetingRequest(
+                    request_id="REQ-MEDB-RECOVERY",
+                    attendees=["Alice", "Bob"],
+                    duration_minutes=30,
+                    priority="medium",
+                    deadline_utc="2026-01-16T17:30Z",
+                    title="Manager Apology Sync",
+                ),
+                "message": "Bumping the placeholder strained the session; a recovery sync was added.",
+            }
+        elif scenario_key == "MEDIUM_C":
+            protected = ["EVT-BOB-LOW"]
+            specs["REQ-BOB-LOW"] = {
+                "followup": MeetingRequest(
+                    request_id="REQ-MEDC-RECOVERY",
+                    attendees=["Alice"],
+                    duration_minutes=30,
+                    priority="medium",
+                    deadline_utc="2026-01-15T17:30Z",
+                    title="Customer Recovery Update",
+                ),
+                "message": "Bob's bumped background block represented a customer commitment; recovery work was added.",
+            }
+        elif scenario_key == "HARD_B":
+            protected = ["EVT-CEO-URGENT"]
+            specs["EVT-CEO-URGENT"] = {
+                "followup": MeetingRequest(
+                    request_id="REQ-HARDB-EXEC-RECOVERY",
+                    attendees=["CEO", "CTO"],
+                    duration_minutes=30,
+                    priority="urgent",
+                    deadline_utc="2026-01-15T21:00Z",
+                    title="Executive Escalation Recovery",
+                ),
+                "message": "The protected executive block was disturbed; an escalation recovery sync is now required.",
+            }
+        elif scenario_key == "HARD_C":
+            specs["REQ-HARDC-TRAP"] = {
+                "followup": MeetingRequest(
+                    request_id="REQ-HARDC-DECISION-RECOVERY",
+                    attendees=["Alice", "Priya"],
+                    duration_minutes=30,
+                    priority="high",
+                    deadline_utc="2026-01-15T22:00Z",
+                    title="Decision Recovery",
+                ),
+                "message": "Scheduling the decoy first triggered follow-up recovery work before trust is restored.",
+            }
+
+        return protected, specs
+
+    def _apply_post_action_transitions(
+        self,
+        action_kind: str,
+        bumped_ids: List[str],
+        start_dt: datetime,
+        target_request: Optional[MeetingRequest] = None,
+        target_event: Optional[ScheduledEvent] = None,
+    ) -> Tuple[float, str, Dict[str, float]]:
+        total_reward = 0.0
+        rc: Dict[str, float] = {}
+        messages: List[str] = []
+
+        for event_id in bumped_ids:
+            if event_id in self._protected_event_ids:
+                harm_reward, harm_feedback, harm_rc = self._trigger_escalation(event_id)
+                total_reward += harm_reward
+                rc.update(harm_rc)
+                if harm_feedback:
+                    messages.append(harm_feedback)
+                snapshot_event = None
+                if self._state.last_action_snapshot:
+                    for saved in self._state.last_action_snapshot["calendar_state"]:
+                        if saved["event_id"] == event_id:
+                            snapshot_event = saved
+                            break
+                if snapshot_event and snapshot_event.get("request_id"):
+                    harm_reward, harm_feedback, harm_rc = self._trigger_escalation(snapshot_event["request_id"])
+                    total_reward += harm_reward
+                    rc.update(harm_rc)
+                    if harm_feedback:
+                        messages.append(harm_feedback)
+
+        if action_kind == "reschedule" and target_event is not None:
+            original_start = None
+            if self._state.last_action_snapshot:
+                for saved in self._state.last_action_snapshot["calendar_state"]:
+                    if saved["event_id"] == target_event.event_id:
+                        original_start = saved["start_time_utc"]
+                        break
+            if (
+                target_event.event_id in self._protected_event_ids
+                and original_start is not None
+                and original_start != self._format_utc(start_dt)
+            ):
+                harm_reward, harm_feedback, harm_rc = self._trigger_escalation(target_event.event_id)
+                total_reward += harm_reward
+                rc.update(harm_rc)
+                if harm_feedback:
+                    messages.append(harm_feedback)
+
+        if (
+            action_kind == "schedule"
+            and target_request is not None
+            and target_request.request_id == "REQ-HARDC-TRAP"
+            and self._find_request("REQ-HARDC-REAL") is not None
+        ):
+            harm_reward, harm_feedback, harm_rc = self._trigger_escalation(target_request.request_id)
+            total_reward += harm_reward
+            rc.update(harm_rc)
+            if harm_feedback:
+                messages.append(harm_feedback)
+
+        return total_reward, " ".join(messages).strip(), rc
+
+    def _trigger_escalation(self, key: str) -> Tuple[float, str, Dict[str, float]]:
+        spec = self._recovery_specs.get(key)
+        if spec is None:
+            return 0.0, "", {}
+
+        followup: MeetingRequest = spec["followup"]
+        if followup.request_id not in self._state.triggered_followups:
+            if not self._request_in_pending(followup.request_id):
+                self._state.pending_requests.append(followup)
+            if not any(r.request_id == followup.request_id for r in self._state.all_requests):
+                self._state.all_requests.append(followup)
+            self._state.total_requests_seen += 1
+            self._state.triggered_followups.append(followup.request_id)
+            if followup.request_id not in self._state.pending_recovery_request_ids:
+                self._state.pending_recovery_request_ids.append(followup.request_id)
+            self._state.escalation_budget_remaining -= 1
+
+        if self._state.escalation_budget_remaining < 0:
+            self._state.system_state = "escalated"
+        elif self._state.pending_recovery_request_ids:
+            self._state.system_state = "recovery_needed"
+        else:
+            self._state.system_state = "strained"
+
+        self._state.last_transition = f"harm:{key}"
+        self._state.state_transition_log.append(self._state.last_transition)
+        self._state.queue_warning = spec["message"]
+
+        return -0.05, spec["message"], {"state_transition_penalty": -0.05}
+
+    def _handle_recovery_resolution(self, request_id: str) -> Tuple[float, str, Dict[str, float]]:
+        if request_id not in self._state.pending_recovery_request_ids:
+            return 0.0, "", {}
+
+        self._state.pending_recovery_request_ids.remove(request_id)
+        if request_id not in self._state.resolved_recovery_requests:
+            self._state.resolved_recovery_requests.append(request_id)
+
+        self._state.last_transition = f"recovery:{request_id}"
+        self._state.state_transition_log.append(self._state.last_transition)
+        if self._state.pending_recovery_request_ids:
+            self._state.system_state = "strained"
+            self._state.queue_warning = "Some recovery work is still pending."
+        else:
+            self._state.system_state = "stable"
+            self._state.queue_warning = None
+
+        return 0.03, f"Recovery request {request_id} resolved; session stability improved.", {"recovery_credit_step": 0.03}
+
     def _build_observation(self, reward: float, done: bool) -> MeetingNegotiatorV1Observation:
         return MeetingNegotiatorV1Observation(
             current_time_utc=self._state.current_time_utc,
@@ -728,6 +960,11 @@ class MeetingNegotiatorV1Environment(Environment):
             investigation_budget_remaining=max(0, self._state.investigation_budget - self._state.investigation_used),
             total_requests_seen=self._state.total_requests_seen,
             requests_completed=self._state.requests_completed,
+            system_state=self._state.system_state,
+            escalation_budget_remaining=self._state.escalation_budget_remaining,
+            protected_event_ids=self._state.protected_event_ids,
+            last_transition=self._state.last_transition,
+            queue_warning=self._state.queue_warning,
         )
 
     # ── Scenario Selection ─────────────────────────────────────────

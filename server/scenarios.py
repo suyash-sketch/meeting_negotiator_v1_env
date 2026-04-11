@@ -420,148 +420,119 @@ def scenario_hard() -> ScenarioSpec:
 
 
 def scenario_hard_b() -> ScenarioSpec:
-    """HARD_B: The VIP No-Bump Gridlock.
-    A multiday executive scheduling puzzle. Sprint Close must happen on day 1,
-    but Alice's training occupies the only feasible day-1 slot. Board Prep
-    must happen on day 2 before the CEO's investor review. The agent must
-    inspect, move the training block across days, then place both requests in
-    the correct order.
-
-    Preferred hours are HIDDEN (HARD tier). Optimal: inspect all principals,
-    reschedule Alice's blocker to day 2, place Sprint Close on day 1, then
-    place Board Prep at the unique day-2 pre-investor slot.
-    """
     participants = {
         "CEO": Participant(
-            name="CEO", timezone="EST",
-            working_hours=["08:00-17:00"],
-            preferred_hours=["09:00-10:00"],
+            name="CEO", timezone="EST", 
+            working_hours=["11:00-14:00"], # This is ONLY 17:00Z - 19:00Z!
+            preferred_hours=["12:00-13:00"]
+        ),
+        "CTO": Participant(
+            name="CTO", timezone="PST", working_hours=["09:00-17:00"], # 17:00Z-01:00Z
+            preferred_hours=["17:00-18:00"] 
         ),
         "Alice": Participant(
-            name="Alice", timezone="EST",
-            working_hours=["09:00-17:00"],
-            preferred_hours=["11:00-13:00"],
-        ),
-        "Bob": Participant(
-            name="Bob", timezone="GMT",
-            working_hours=["08:00-18:00"],
-            preferred_hours=["16:00-17:00"],
-        ),
-        "Legal": Participant(
-            name="Legal", timezone="UTC",
-            working_hours=["16:00-17:00"],
-            preferred_hours=["16:00-17:00"],
+            name="Alice", timezone="GMT", working_hours=["09:00-18:00"], # 09:00Z-18:00Z
+            preferred_hours=["16:00-17:00"]
         ),
     }
+
+    # CEO and CTO ONLY overlap from 17:00Z to 22:00Z.
+    # Alice leaves at 18:00Z. 
+    # Therefore, CEO + CTO + Alice ONLY overlap from 17:00Z to 18:00Z. (Exactly 1 hour).
+    
     calendar_state = [
+        # Block the only 3-way overlap slot with an unbumpable meeting
         ScheduledEvent(
-            event_id="EVT-CEO-VIP", attendees=["CEO"],
-            start_time_utc="2026-01-15T14:00Z", duration_minutes=180, priority="urgent",
+            event_id="EVT-CEO-URGENT", attendees=["CEO", "Alice"],
+            start_time_utc="2026-01-15T17:00Z", duration_minutes=60, priority="urgent"
         ),
+        # Block Alice earlier so she can't easily move her CEO meeting backwards
         ScheduledEvent(
-            event_id="EVT-CEO-INVESTOR", attendees=["CEO"],
-            start_time_utc="2026-01-16T15:00Z", duration_minutes=120, priority="urgent",
-        ),
-        ScheduledEvent(
-            event_id="EVT-ALICE-TRAIN", attendees=["Alice"],
-            start_time_utc="2026-01-15T16:00Z", duration_minutes=120, priority="high",
-        ),
-        ScheduledEvent(
-            event_id="EVT-BOB-CLIENT", attendees=["Bob"],
-            start_time_utc="2026-01-15T14:00Z", duration_minutes=120, priority="medium",
+            event_id="EVT-ALICE-MID", attendees=["Alice"],
+            start_time_utc="2026-01-15T15:00Z", duration_minutes=120, priority="high"
         ),
     ]
-    req1 = MeetingRequest(
-        request_id="REQ-HARDB-1", attendees=["CEO", "Alice", "Bob"],
-        duration_minutes=60, priority="urgent",
-        deadline_utc="2026-01-16T15:00Z", title="Board Prep",
+
+    # The agent MUST schedule a 3-way meeting today (deadline 18:00Z).
+    req_impossible_greedy = MeetingRequest(
+        request_id="REQ-HARDB-ALL", attendees=["CEO", "CTO", "Alice"],
+        duration_minutes=60, priority="urgent", deadline_utc="2026-01-15T18:00Z", title="Critical Launch Sync"
     )
-    req2 = MeetingRequest(
-        request_id="REQ-HARDB-2", attendees=["Alice", "Bob", "Legal"],
-        duration_minutes=60, priority="high",
-        deadline_utc="2026-01-15T17:00Z", title="Sprint Close",
+    
+    # A decoy meeting to consume CEO's only other free time.
+    req_decoy = MeetingRequest(
+        request_id="REQ-HARDB-DECOY", attendees=["CEO", "CTO"],
+        duration_minutes=60, priority="low", deadline_utc="2026-01-16T18:00Z", title="Arch Review"
     )
+
     return ScenarioSpec(
-        scenario_id="HARD_B", description="The VIP No-Bump Gridlock",
-        current_time_utc="2026-01-15T12:00Z",
-        participants=participants, calendar_state=calendar_state,
-        pending_requests=[req1, req2], all_requests=[req1, req2],
-        max_turns=14,
+        scenario_id="HARD_B",
+        description="The 60-Minute VIP Bottleneck",
+        current_time_utc="2026-01-15T08:00Z",
+        participants=participants,
+        calendar_state=calendar_state,
+        pending_requests=[req_impossible_greedy, req_decoy],
+        all_requests=[req_impossible_greedy, req_decoy],
+        max_turns=15,
     )
 
 
 def scenario_hard_c() -> ScenarioSpec:
-    """HARD_C: The Decoy Trap.
-    A multiday downstream-consequence puzzle. The urgent real review has only
-    one valid slot on day 2. The tempting high-priority trap request can also
-    fit in that slot, so greedily taking the prettier day-2 placement ruins the
-    urgent request. The right move is to bump the day-1 decoy, place the trap
-    on day 1, reserve the unique day-2 slot for the urgent review, then recover
-    the bumped placeholder later.
-
-    Preferred hours are HIDDEN (HARD tier).
-    """
     participants = {
         "Alice": Participant(
-            name="Alice", timezone="EST",
-            working_hours=["09:00-17:00"],
-            preferred_hours=["10:00-12:00"],
+            name="Alice", timezone="EST", working_hours=["10:00-18:00"], # 15:00Z-23:00Z
+            preferred_hours=[]
         ),
-        "Bob": Participant(
-            name="Bob", timezone="UTC",
-            working_hours=["09:00-17:00"],
-            preferred_hours=["14:00-16:00"],
+        "CTO": Participant(
+            name="CTO", timezone="PST", working_hours=["07:00-16:00"], # 15:00Z-00:00Z
+            preferred_hours=[]
         ),
-        "Dev": Participant(
-            name="Dev", timezone="IST",
-            working_hours=["14:00-23:00"],  # 08:30–17:30 UTC
-            preferred_hours=["18:00-20:00"],  # 12:30–14:30 UTC
+        "Priya": Participant(
+            name="Priya", timezone="IST", working_hours=["10:00-19:00"], # 04:30Z-13:30Z (Will do night shift overlap)
+            # Priya is forced to work a split shift to overlap with US
+            preferred_hours=["15:00-16:00"] 
         ),
     }
-    decoy = ScheduledEvent(
-        event_id="EVT-DECOY", attendees=["Alice", "Bob"],
-        start_time_utc="2026-01-15T15:00Z", duration_minutes=60, priority="low",
-        request_id="REQ-DECOY",
-    )
-    bob_day1_early = ScheduledEvent(
-        event_id="EVT-BOB-EARLY", attendees=["Bob"],
-        start_time_utc="2026-01-15T13:00Z", duration_minutes=120, priority="urgent",
-    )
-    blocker = ScheduledEvent(
-        event_id="EVT-BLOCKER", attendees=["Dev"],
-        start_time_utc="2026-01-15T14:00Z", duration_minutes=120, priority="urgent",
-    )
-    bob_day1_block = ScheduledEvent(
-        event_id="EVT-BOB-LATE", attendees=["Bob"],
-        start_time_utc="2026-01-15T16:00Z", duration_minutes=60, priority="urgent",
-    )
-    alice_day2_block = ScheduledEvent(
-        event_id="EVT-ALICE-DAY2", attendees=["Alice"],
-        start_time_utc="2026-01-16T15:00Z", duration_minutes=120, priority="high",
-    )
+
+    calendar_state = [
+        # Block CTO from 16:00Z onwards completely for the day.
+        # This means CTO is ONLY free from 15:00Z to 16:00Z today.
+        ScheduledEvent(
+            event_id="EVT-CTO-BLOCKED", attendees=["CTO"],
+            start_time_utc="2026-01-15T16:00Z", duration_minutes=480, priority="urgent"
+        ),
+        # Block Alice from 16:00Z to 17:00Z just to prevent trivial sliding
+        ScheduledEvent(
+            event_id="EVT-ALICE-BLOCKED", attendees=["Alice"],
+            start_time_utc="2026-01-15T16:00Z", duration_minutes=60, priority="medium"
+        ),
+    ]
+
+    # TRAP: Alice and Priya. Priya's preferred hours are 15:00-16:00. 
+    # Greedy model will see 15:00Z is open for Alice and Priya and schedule it here.
     req_trap = MeetingRequest(
-        request_id="REQ-HARDC-TRAP", attendees=["Alice", "Bob"],
-        duration_minutes=60, priority="high",
-        deadline_utc="2026-01-15T16:00Z", title="Quick Sync",
+        request_id="REQ-HARDC-TRAP", attendees=["Alice", "Priya"],
+        duration_minutes=60, priority="high", 
+        deadline_utc="2026-01-15T16:00Z", # TIGHT DEADLINE - Forces model to act on this first
+        title="Status Sync"
     )
+
     req_real = MeetingRequest(
-        request_id="REQ-HARDC-REAL", attendees=["Alice", "Bob", "Dev"],
-        duration_minutes=60, priority="urgent",
-        deadline_utc="2026-01-16T15:00Z", title="Critical Review",
+        request_id="REQ-HARDC-REAL", attendees=["Alice", "CTO"],
+        duration_minutes=60, priority="urgent", 
+        deadline_utc="2026-01-15T23:00Z", # LOOSE DEADLINE
+        title="Sev1 Outage Postmortem"
     )
-    req_decoy = MeetingRequest(
-        request_id="REQ-DECOY", attendees=["Alice", "Bob"],
-        duration_minutes=60, priority="low",
-        deadline_utc="2026-01-16T18:00Z", title="Placeholder",
-    )
+
     return ScenarioSpec(
-        scenario_id="HARD_C", description="The Decoy Trap",
-        current_time_utc="2026-01-15T12:00Z",
+        scenario_id="HARD_C",
+        description="The Poisoned Decoy Slot",
+        current_time_utc="2026-01-15T08:00Z",
         participants=participants,
-        calendar_state=[decoy, bob_day1_early, blocker, bob_day1_block, alice_day2_block],
+        calendar_state=calendar_state,
         pending_requests=[req_trap, req_real],
-        all_requests=[req_trap, req_real, req_decoy],
-        max_turns=14,
+        all_requests=[req_trap, req_real],
+        max_turns=12,
     )
 
 

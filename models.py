@@ -184,6 +184,13 @@ class MeetingNegotiatorV1Observation(Observation):
     total_requests_seen: int = Field(default=0, description="Total requests seen so far (including dynamic ones).")
     requests_completed: int = Field(default=0, description="Requests successfully scheduled.")
 
+    # ── Stateful Ops Telemetry ──
+    system_state: str = Field(default="stable", description="Operational session state: stable, strained, escalated, or recovery_needed.")
+    escalation_budget_remaining: int = Field(default=0, description="Remaining budget before the scheduling session escalates.")
+    protected_event_ids: List[str] = Field(default_factory=list, description="Existing events that should not be moved or displaced casually.")
+    last_transition: Optional[str] = Field(default=None, description="Last state transition summary, if any.")
+    queue_warning: Optional[str] = Field(default=None, description="Operational warning surfaced after a harmful transition.")
+
 
 class MeetingNegotiatorV1State(State):
     """
@@ -226,6 +233,17 @@ class MeetingNegotiatorV1State(State):
     dynamic_requests_injected: int = Field(default=0)
     total_requests_seen: int = Field(default=0)
     requests_completed: int = Field(default=0)
+
+    # ── Stateful Ops Mechanics ──
+    system_state: str = Field(default="stable")
+    escalation_budget_remaining: int = Field(default=0)
+    protected_event_ids: List[str] = Field(default_factory=list)
+    state_transition_log: List[str] = Field(default_factory=list)
+    last_transition: Optional[str] = Field(default=None)
+    queue_warning: Optional[str] = Field(default=None)
+    triggered_followups: List[str] = Field(default_factory=list)
+    resolved_recovery_requests: List[str] = Field(default_factory=list)
+    pending_recovery_request_ids: List[str] = Field(default_factory=list)
 
     # ── Reward Components ──
     last_reward_components: Dict[str, float] = Field(default_factory=dict)
