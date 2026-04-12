@@ -133,9 +133,8 @@ class TestRewardDecomposition:
             proposed_start_utc="2026-01-15T18:00Z",
         ))
         assert "outside working hours" in obs.last_action_feedback
-        assert obs.soft_violation_count == 0
 
-    def test_hard_after_hours_allowed_with_penalty(self, env):
+    def test_hard_after_hours_rejected_after_cleanup(self, env):
         env.reset(scenario_id="HARD_B")
         obs = env.step(MeetingNegotiatorV1Action(
             command="ScheduleNew",
@@ -143,11 +142,8 @@ class TestRewardDecomposition:
             proposed_start_utc="2026-01-15T16:00Z",
         ))
         pending_ids = {req.request_id for req in obs.pending_requests}
-        assert "Hard-tier override" in obs.last_action_feedback
-        assert "REQ-HARDB-DECOY" not in pending_ids
-        assert "soft_after_hours_violation" in obs.last_reward_components
-        assert obs.soft_violation_count == 1
-        assert len(obs.soft_after_hours_event_ids) == 1
+        assert "outside working hours" in obs.last_action_feedback
+        assert "REQ-HARDB-DECOY" in pending_ids
 
     def test_modified_existing_event_counts_in_final_compliance(self, env):
         env.reset(scenario_id="HARD")

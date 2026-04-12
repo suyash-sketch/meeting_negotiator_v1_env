@@ -58,7 +58,6 @@ try:
         STEP_PENALTY, INVALID_ACTION_PENALTY, CONFLICT_ACTION_PENALTY,
         PREFERENCE_PENALTY_PER_ATTENDEE, SCHEDULE_SUCCESS_REWARD,
         RESCHEDULE_SUCCESS_REWARD, PRIORITY_BONUS, DEADLINE_PROXIMITY_BONUS,
-        SOFT_AFTER_HOURS_PENALTY_PER_ATTENDEE,
         compute_final_score,
     )
     from .scenario_resolver import resolve_scenario
@@ -73,7 +72,6 @@ except ImportError:
         STEP_PENALTY, INVALID_ACTION_PENALTY, CONFLICT_ACTION_PENALTY,
         PREFERENCE_PENALTY_PER_ATTENDEE, SCHEDULE_SUCCESS_REWARD,
         RESCHEDULE_SUCCESS_REWARD, PRIORITY_BONUS, DEADLINE_PROXIMITY_BONUS,
-        SOFT_AFTER_HOURS_PENALTY_PER_ATTENDEE,
         compute_final_score,
     )
     from scenario_resolver import resolve_scenario
@@ -104,7 +102,6 @@ class MeetingNegotiatorV1Environment(Environment):
         self._followup_trigger_step: int = 0
         self._protected_event_ids: List[str] = []
         self._recovery_specs: Dict[str, Dict[str, Any]] = {}
-        self._allow_soft_working_hours_violations: bool = False
 
     def reset(self, scenario_id: Optional[str] = None, seed: Optional[int] = None) -> MeetingNegotiatorV1Observation:
         self._reset_count += 1
@@ -132,7 +129,6 @@ class MeetingNegotiatorV1Environment(Environment):
         # Partial observability: hide preferences on HARD
         self._hidden_prefs = {}
         is_hard = scenario.scenario_id.upper().startswith("HARD")
-        self._allow_soft_working_hours_violations = is_hard
         if is_hard:
             for name, p in participants.items():
                 if p.preferred_hours:
@@ -173,8 +169,6 @@ class MeetingNegotiatorV1Environment(Environment):
             system_state="stable",
             escalation_budget_remaining=escalation_budget,
             protected_event_ids=list(self._protected_event_ids),
-            soft_violations=[],
-            soft_after_hours_event_ids=[],
             modified_existing_event_ids=[],
         )
 
@@ -344,8 +338,6 @@ class MeetingNegotiatorV1Environment(Environment):
         self._state.triggered_followups = list(snap["triggered_followups"])
         self._state.resolved_recovery_requests = list(snap["resolved_recovery_requests"])
         self._state.pending_recovery_request_ids = list(snap["pending_recovery_request_ids"])
-        self._state.soft_violations = list(snap["soft_violations"])
-        self._state.soft_after_hours_event_ids = list(snap["soft_after_hours_event_ids"])
         self._state.modified_existing_event_ids = list(snap["modified_existing_event_ids"])
         self._state.last_transition = snap["last_transition"]
         self._state.queue_warning = snap["queue_warning"]
@@ -368,8 +360,6 @@ class MeetingNegotiatorV1Environment(Environment):
             "  7. Investigation Discipline (0.05): inspect before acting (HARD only)\n"
             "  8. Stability Penalty: harmful transitions reduce final score\n"
             "  9. Recovery Credit: fixing recovery work restores some score\n\n"
-            "HARD-TIER SOFT OVERRIDE:\n"
-            f"  After-hours scheduling is allowed on HARD with penalty -{SOFT_AFTER_HOURS_PENALTY_PER_ATTENDEE:.2f} per affected attendee.\n\n"
             "PER-STEP PENALTIES:\n"
             f"  Step cost: -{STEP_PENALTY}\n"
             f"  Invalid action: -{INVALID_ACTION_PENALTY}\n"
@@ -430,8 +420,6 @@ class MeetingNegotiatorV1Environment(Environment):
             "triggered_followups": list(self._state.triggered_followups),
             "resolved_recovery_requests": list(self._state.resolved_recovery_requests),
             "pending_recovery_request_ids": list(self._state.pending_recovery_request_ids),
-            "soft_violations": list(self._state.soft_violations),
-            "soft_after_hours_event_ids": list(self._state.soft_after_hours_event_ids),
             "modified_existing_event_ids": list(self._state.modified_existing_event_ids),
             "last_transition": self._state.last_transition,
             "queue_warning": self._state.queue_warning,
@@ -454,15 +442,13 @@ class MeetingNegotiatorV1Environment(Environment):
 
         start_dt = self._parse_utc(action.proposed_start_utc)
         end_dt = start_dt + timedelta(minutes=request.duration_minutes)
-        hard_issues, soft_issues, conflicts = self._evaluate_constraints(request, start_dt, end_dt)
+        hard_issues, conflicts = self._evaluate_constraints(request, start_dt, end_dt)
         issues = list(hard_issues)
         if conflicts:
             conflict_names = ", ".join([c.event_id for c in conflicts])
             issues.append(f"conflicts: {conflict_names}")
         if issues:
             return reward, f"Slot NOT available: {', '.join(issues)}.", rc
-        if soft_issues:
-            return reward, f"Slot available only via hard-tier override: {', '.join(soft_issues)}.", rc
 
         # Add preference info
         pref_violations = self._preference_violations(request.attendees, start_dt, end_dt)
@@ -488,7 +474,7 @@ class MeetingNegotiatorV1Environment(Environment):
         start_dt = self._parse_utc(action.proposed_start_utc)
         end_dt = start_dt + timedelta(minutes=request.duration_minutes)
 
-        hard_issues, soft_issues, conflicts = self._evaluate_constraints(request, start_dt, end_dt)
+        hard_issues, conflicts = self._evaluate_constraints(request, start_dt, end_dt)
         if hard_issues:
             reward -= INVALID_ACTION_PENALTY
             rc["constraint_violation"] = -INVALID_ACTION_PENALTY
@@ -537,14 +523,6 @@ class MeetingNegotiatorV1Environment(Environment):
             feedback += f" Outside preferred hours: {', '.join(pref_violations)} (-{pv_penalty:.2f})."
         if bumped:
             feedback += f" Bumped lower-priority events: {', '.join(bumped)}."
-        feedback, reward = self._apply_soft_constraint_effects(
-            target_id=new_event.event_id,
-            soft_issues=soft_issues,
-            attendee_count=len(request.attendees),
-            feedback=feedback,
-            reward=reward,
-            rc=rc,
-        )
 
         harm_reward, harm_feedback, harm_rc = self._apply_post_action_transitions(
             action_kind="schedule",
@@ -595,7 +573,7 @@ class MeetingNegotiatorV1Environment(Environment):
             title="Reschedule",
         )
 
-        hard_issues, soft_issues, conflicts = self._evaluate_constraints(temp_request, start_dt, end_dt, ignore_event_id=event.event_id)
+        hard_issues, conflicts = self._evaluate_constraints(temp_request, start_dt, end_dt, ignore_event_id=event.event_id)
         if hard_issues:
             reward -= INVALID_ACTION_PENALTY
             rc["constraint_violation"] = -INVALID_ACTION_PENALTY
@@ -625,14 +603,6 @@ class MeetingNegotiatorV1Environment(Environment):
             feedback += f" Outside preferred hours: {', '.join(pref_violations)} (-{pv_penalty:.2f})."
         if bumped:
             feedback += f" Bumped lower-priority events: {', '.join(bumped)}."
-        feedback, reward = self._apply_soft_constraint_effects(
-            target_id=event.event_id,
-            soft_issues=soft_issues,
-            attendee_count=len(event.attendees),
-            feedback=feedback,
-            reward=reward,
-            rc=rc,
-        )
 
         harm_reward, harm_feedback, harm_rc = self._apply_post_action_transitions(
             action_kind="reschedule",
@@ -651,7 +621,7 @@ class MeetingNegotiatorV1Environment(Environment):
 
     def _evaluate_constraints(self, request, start_dt, end_dt, ignore_event_id=None):
         hard_issues = []
-        soft_issues = []
+      
         if start_dt < self._parse_utc(self._state.current_time_utc):
             hard_issues.append("proposed time is in the past")
         if request.deadline_utc and end_dt > self._parse_utc(request.deadline_utc):
@@ -663,41 +633,11 @@ class MeetingNegotiatorV1Environment(Environment):
                 continue
             try:
                 if not self._within_working_hours(participant, start_dt, end_dt):
-                    if self._allow_soft_working_hours_violations:
-                        soft_issues.append(f"{attendee} outside working hours")
-                    else:
-                        hard_issues.append(f"{attendee} outside working hours")
+                    hard_issues.append(f"{attendee} outside working hours")
             except ValueError as exc:
                 hard_issues.append(str(exc))
         conflicts = self._find_conflicts(request.attendees, start_dt, end_dt, ignore_event_id)
-        return hard_issues, soft_issues, conflicts
-
-    def _apply_soft_constraint_effects(
-        self,
-        target_id: str,
-        soft_issues: List[str],
-        attendee_count: int,
-        feedback: str,
-        reward: float,
-        rc: Dict[str, float],
-    ) -> Tuple[str, float]:
-        if not soft_issues:
-            if target_id in self._state.soft_after_hours_event_ids:
-                self._state.soft_after_hours_event_ids = [eid for eid in self._state.soft_after_hours_event_ids if eid != target_id]
-            self._state.soft_violations = [v for v in self._state.soft_violations if not v.startswith(f"after_hours:{target_id}:")]
-            return feedback, reward
-
-        if any("outside working hours" in issue for issue in soft_issues):
-            penalty = SOFT_AFTER_HOURS_PENALTY_PER_ATTENDEE * attendee_count
-            reward -= penalty
-            rc["soft_after_hours_violation"] = -penalty
-            if target_id not in self._state.soft_after_hours_event_ids:
-                self._state.soft_after_hours_event_ids.append(target_id)
-            self._state.soft_violations = [v for v in self._state.soft_violations if not v.startswith(f"after_hours:{target_id}:")]
-            self._state.soft_violations.append(f"after_hours:{target_id}:{'|'.join(soft_issues)}")
-            feedback += f" Hard-tier override: outside working hours for {', '.join(soft_issues)} (-{penalty:.2f})."
-
-        return feedback, reward
+        return hard_issues, conflicts
 
     def _find_conflicts(self, attendees, start_dt, end_dt, ignore_event_id=None):
         conflicts = []
@@ -1032,8 +972,6 @@ class MeetingNegotiatorV1Environment(Environment):
             protected_event_ids=self._state.protected_event_ids,
             last_transition=self._state.last_transition,
             queue_warning=self._state.queue_warning,
-            soft_violation_count=len(self._state.soft_violations),
-            soft_after_hours_event_ids=list(self._state.soft_after_hours_event_ids),
         )
 
     # ── Scenario Selection ─────────────────────────────────────────

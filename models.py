@@ -190,8 +190,6 @@ class MeetingNegotiatorV1Observation(Observation):
     protected_event_ids: List[str] = Field(default_factory=list, description="Existing events that should not be moved or displaced casually.")
     last_transition: Optional[str] = Field(default=None, description="Last state transition summary, if any.")
     queue_warning: Optional[str] = Field(default=None, description="Operational warning surfaced after a harmful transition.")
-    soft_violation_count: int = Field(default=0, description="Count of active soft-constraint violations carried in current schedule.")
-    soft_after_hours_event_ids: List[str] = Field(default_factory=list, description="Events currently allowed only via hard-tier after-hours override.")
 
 
 class MeetingNegotiatorV1State(State):
@@ -246,8 +244,6 @@ class MeetingNegotiatorV1State(State):
     triggered_followups: List[str] = Field(default_factory=list)
     resolved_recovery_requests: List[str] = Field(default_factory=list)
     pending_recovery_request_ids: List[str] = Field(default_factory=list)
-    soft_violations: List[str] = Field(default_factory=list)
-    soft_after_hours_event_ids: List[str] = Field(default_factory=list)
     modified_existing_event_ids: List[str] = Field(default_factory=list)
 
     # ── Reward Components ──
