@@ -380,10 +380,10 @@ def scenario_hard() -> ScenarioSpec:
             start_time_utc="2026-01-15T17:00Z", duration_minutes=60, priority="urgent"),
         ScheduledEvent(event_id="EVT-ALICE-MID", attendees=["Alice"],
             start_time_utc="2026-01-15T15:00Z", duration_minutes=60, priority="urgent"),
-        ScheduledEvent(event_id="EVT-ALICE-BOB-URGENT", attendees=["Alice", "Bob"],
-            start_time_utc="2026-01-15T14:00Z", duration_minutes=60, priority="urgent"),
-        ScheduledEvent(event_id="EVT-ALICE-DEV-URGENT", attendees=["Alice", "Dev"],
-            start_time_utc="2026-01-15T16:00Z", duration_minutes=60, priority="urgent"),
+        ScheduledEvent(event_id="EVT-ALICE-BOB-HIGH", attendees=["Alice", "Bob"],
+            start_time_utc="2026-01-15T14:00Z", duration_minutes=60, priority="high"),
+        ScheduledEvent(event_id="EVT-ALICE-DEV-HIGH", attendees=["Alice", "Dev"],
+            start_time_utc="2026-01-15T16:00Z", duration_minutes=60, priority="high"),
         ScheduledEvent(event_id="EVT-DEV-LOW", attendees=["Dev"],
             start_time_utc="2026-01-15T17:00Z", duration_minutes=60, priority="low",
             request_id="REQ-BUMPED-DEV"),
@@ -415,7 +415,7 @@ def scenario_hard() -> ScenarioSpec:
         participants=participants, calendar_state=calendar_state,
         pending_requests=[req_urgent, req_cto],
         all_requests=[req_urgent, req_cto, bumped_dev, emergency],
-        max_turns=15, dynamic_followups=[emergency],
+        max_turns=12, dynamic_followups=[emergency],
     )
 
 
@@ -479,59 +479,87 @@ def scenario_hard_b() -> ScenarioSpec:
 
 def scenario_hard_c() -> ScenarioSpec:
     participants = {
+        "CEO": Participant(
+            name="CEO", timezone="UTC", 
+            working_hours=["09:00-18:00"], 
+            # THE TRAP: CEO strictly uses mornings for deep work.
+            # If the agent bumps a meeting to Day 2 morning without inspecting, 
+            # the Patience lockout will trigger and ruin the board.
+            preferred_hours=["15:00-18:00"] 
+        ),
         "Alice": Participant(
-            name="Alice", timezone="EST", working_hours=["10:00-18:00"], # 15:00Z-23:00Z
+            name="Alice", timezone="UTC", 
+            working_hours=["09:00-18:00"], 
             preferred_hours=[]
         ),
-        "CTO": Participant(
-            name="CTO", timezone="PST", working_hours=["07:00-16:00"], # 15:00Z-00:00Z
+        "Bob": Participant(
+            name="Bob", timezone="UTC", 
+            working_hours=["09:00-18:00"], 
             preferred_hours=[]
-        ),
-        "Priya": Participant(
-            name="Priya", timezone="IST", working_hours=["10:00-19:00"], # 04:30Z-13:30Z (Will do night shift overlap)
-            # Priya is forced to work a split shift to overlap with US
-            preferred_hours=["15:00-16:00"] 
         ),
     }
 
     calendar_state = [
-        # Block CTO from 16:00Z onwards completely for the day.
-        # This means CTO is ONLY free from 15:00Z to 16:00Z today.
+        # === DAY 1 CONSTRAINTS (Jan 15) ===
+        # Alice is completely blocked in the morning. She is ONLY free 15:00Z onwards.
         ScheduledEvent(
-            event_id="EVT-CTO-BLOCKED", attendees=["CTO"],
-            start_time_utc="2026-01-15T16:00Z", duration_minutes=480, priority="urgent"
+            event_id="EVT-ALICE-MORNING", attendees=["Alice"],
+            start_time_utc="2026-01-15T09:00Z", duration_minutes=360, priority="high" # Blocks 09:00-15:00
         ),
-        # Block Alice from 16:00Z to 17:00Z just to prevent trivial sliding
+        # Bob is also blocked through early afternoon, removing the model's easy
+        # "move the trap to 13:00Z/14:00Z" bypass.
         ScheduledEvent(
-            event_id="EVT-ALICE-BLOCKED", attendees=["Alice"],
-            start_time_utc="2026-01-15T16:00Z", duration_minutes=60, priority="medium"
+            event_id="EVT-BOB-MIDDAY", attendees=["Bob"],
+            start_time_utc="2026-01-15T13:00Z", duration_minutes=120, priority="high" # Blocks 13:00-15:00
+        ),
+        # Bob is completely blocked in the late afternoon. He is ONLY free before 16:00Z.
+        ScheduledEvent(
+            event_id="EVT-BOB-LATE", attendees=["Bob"],
+            start_time_utc="2026-01-15T16:00Z", duration_minutes=120, priority="high" # Blocks 16:00-18:00
+        ),
+        
+        # === THE BOTTLENECK ===
+        # Because of Alice and Bob's constraints, they ONLY overlap at exactly 15:00Z.
+        # But 15:00Z is blocked by a medium-priority CEO/Bob meeting.
+        ScheduledEvent(
+            event_id="EVT-TRAP-BUMP", attendees=["CEO", "Bob"],
+            start_time_utc="2026-01-15T15:00Z", duration_minutes=60, priority="medium"
+        ),
+
+        # === DAY 2 CONSTRAINTS (Jan 16) ===
+        # Day 2 intentionally has no clean CEO+Bob overlap, so the trap block
+        # cannot be cheaply pushed forward and forgotten.
+        ScheduledEvent(
+            event_id="EVT-CEO-DAY2-MORNING", attendees=["CEO"],
+            start_time_utc="2026-01-16T09:00Z", duration_minutes=120, priority="high" # Blocks 09:00-11:00
+        ),
+        ScheduledEvent(
+            event_id="EVT-CEO-DAY2-MID", attendees=["CEO"],
+            start_time_utc="2026-01-16T11:00Z", duration_minutes=240, priority="high" # Blocks 11:00-15:00
+        ),
+        ScheduledEvent(
+            event_id="EVT-BOB-DAY2-LATE", attendees=["Bob"],
+            start_time_utc="2026-01-16T15:00Z", duration_minutes=180, priority="high" # Blocks 15:00-18:00
         ),
     ]
 
-    # TRAP: Alice and Priya. Priya's preferred hours are 15:00-16:00. 
-    # Greedy model will see 15:00Z is open for Alice and Priya and schedule it here.
-    req_trap = MeetingRequest(
-        request_id="REQ-HARDC-TRAP", attendees=["Alice", "Priya"],
-        duration_minutes=60, priority="high", 
-        deadline_utc="2026-01-15T16:00Z", # TIGHT DEADLINE - Forces model to act on this first
-        title="Status Sync"
-    )
-
-    req_real = MeetingRequest(
-        request_id="REQ-HARDC-REAL", attendees=["Alice", "CTO"],
+    # The agent MUST schedule a 3-way meeting on Day 1.
+    # Mathematical reality: It CAN ONLY fit at 15:00Z.
+    req_urgent_day1 = MeetingRequest(
+        request_id="REQ-URGENT-DAY1", attendees=["CEO", "Alice", "Bob"],
         duration_minutes=60, priority="urgent", 
-        deadline_utc="2026-01-15T23:00Z", # LOOSE DEADLINE
-        title="Sev1 Outage Postmortem"
+        deadline_utc="2026-01-15T18:00Z", # MUST happen today
+        title="Critical Board Prep"
     )
 
     return ScenarioSpec(
         scenario_id="HARD_C",
-        description="The Poisoned Decoy Slot",
+        description="The 48-Hour Blind Cascade",
         current_time_utc="2026-01-15T08:00Z",
         participants=participants,
         calendar_state=calendar_state,
-        pending_requests=[req_trap, req_real],
-        all_requests=[req_trap, req_real],
+        pending_requests=[req_urgent_day1],
+        all_requests=[req_urgent_day1],
         max_turns=12,
     )
 

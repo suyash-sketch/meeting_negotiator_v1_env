@@ -125,6 +125,42 @@ class TestRewardDecomposition:
         obs = env.step(MeetingNegotiatorV1Action(command="GetPolicy"))
         assert "step_cost" in obs.last_reward_components
 
+    def test_easy_after_hours_still_rejected(self, env):
+        env.reset(scenario_id="EASY")
+        obs = env.step(MeetingNegotiatorV1Action(
+            command="ScheduleNew",
+            target_id="REQ-EASY-1",
+            proposed_start_utc="2026-01-15T18:00Z",
+        ))
+        assert "outside working hours" in obs.last_action_feedback
+        assert obs.soft_violation_count == 0
+
+    def test_hard_after_hours_allowed_with_penalty(self, env):
+        env.reset(scenario_id="HARD_B")
+        obs = env.step(MeetingNegotiatorV1Action(
+            command="ScheduleNew",
+            target_id="REQ-HARDB-DECOY",
+            proposed_start_utc="2026-01-15T16:00Z",
+        ))
+        pending_ids = {req.request_id for req in obs.pending_requests}
+        assert "Hard-tier override" in obs.last_action_feedback
+        assert "REQ-HARDB-DECOY" not in pending_ids
+        assert "soft_after_hours_violation" in obs.last_reward_components
+        assert obs.soft_violation_count == 1
+        assert len(obs.soft_after_hours_event_ids) == 1
+
+    def test_modified_existing_event_counts_in_final_compliance(self, env):
+        env.reset(scenario_id="HARD")
+        env.step(MeetingNegotiatorV1Action(
+            command="RescheduleExisting",
+            target_id="EVT-ALICE-BOB-URGENT",
+            proposed_start_utc="2026-01-15T18:00Z",
+        ))
+        obs = env.step(MeetingNegotiatorV1Action(command="SubmitFinalCalendar"))
+        assert obs.reward_breakdown is not None
+        assert obs.reward_breakdown["working_hours_compliance"] < 0.15
+        assert obs.reward_breakdown["preference_quality"] < 0.10
+
 
 class TestDynamicFollowups:
     def test_medium_injects_followups(self, env):
@@ -137,3 +173,44 @@ class TestDynamicFollowups:
                 break
         # Either followup was injected or episode ended
         assert obs.done or obs.total_requests_seen >= initial_pending
+
+
+class TestOperationalTransitions:
+    def test_medium_b_protected_bump_triggers_recovery(self, env):
+        env.reset(scenario_id="MEDIUM_B")
+        obs = env.step(MeetingNegotiatorV1Action(
+            command="ScheduleNew",
+            target_id="REQ-MEDB-1",
+            proposed_start_utc="2026-01-16T14:00Z",
+        ))
+        pending_ids = {req.request_id for req in obs.pending_requests}
+        assert obs.system_state == "recovery_needed"
+        assert "REQ-MEDB-RECOVERY" in pending_ids
+        assert obs.escalation_budget_remaining == 0
+
+    def test_recovery_request_returns_session_to_stable(self, env):
+        env.reset(scenario_id="MEDIUM_B")
+        env.step(MeetingNegotiatorV1Action(
+            command="ScheduleNew",
+            target_id="REQ-MEDB-1",
+            proposed_start_utc="2026-01-16T14:00Z",
+        ))
+        obs = env.step(MeetingNegotiatorV1Action(
+            command="ScheduleNew",
+            target_id="REQ-MEDB-RECOVERY",
+            proposed_start_utc="2026-01-16T15:00Z",
+        ))
+        pending_ids = {req.request_id for req in obs.pending_requests}
+        assert obs.system_state == "stable"
+        assert "REQ-MEDB-RECOVERY" not in pending_ids
+
+    def test_hard_c_protected_bump_triggers_recovery(self, env):
+        env.reset(scenario_id="HARD_C")
+        obs = env.step(MeetingNegotiatorV1Action(
+            command="ScheduleNew",
+            target_id="REQ-URGENT-DAY1",
+            proposed_start_utc="2026-01-15T15:00Z",
+        ))
+        pending_ids = {req.request_id for req in obs.pending_requests}
+        assert "REQ-HARDC-DECISION-RECOVERY" in pending_ids
+        assert obs.system_state == "recovery_needed"

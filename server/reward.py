@@ -37,6 +37,7 @@ STEP_PENALTY = 0.01
 INVALID_ACTION_PENALTY = 0.05
 CONFLICT_ACTION_PENALTY = 0.05
 PREFERENCE_PENALTY_PER_ATTENDEE = 0.01
+SOFT_AFTER_HOURS_PENALTY_PER_ATTENDEE = 0.04
 
 SCHEDULE_SUCCESS_REWARD = 0.25
 RESCHEDULE_SUCCESS_REWARD = 0.10
@@ -131,6 +132,7 @@ def compute_final_score(
     escalation_budget_remaining: int = 0,
     triggered_followups: Optional[List[str]] = None,
     resolved_recovery_requests: Optional[List[str]] = None,
+    modified_existing_events: Optional[List[Dict]] = None,
 ) -> Tuple[float, Dict[str, float]]:
     """Compute the final episode score with a full decomposition.
 
@@ -168,6 +170,8 @@ def compute_final_score(
     else:
         deadline = 0.0
 
+    scored_existing_events = modified_existing_events or []
+
     # ── 3. WORKING HOURS COMPLIANCE ────────────────────────────────
     wh_violations = 0
     wh_checks = 0
@@ -178,6 +182,21 @@ def compute_final_score(
         start_dt = _parse_utc(event["start_time_utc"])
         end_dt = start_dt + timedelta(minutes=event["duration_minutes"])
         for attendee in request.get("attendees", []):
+            wh_checks += 1
+            p = participants.get(attendee)
+            if p is None:
+                wh_violations += 1
+                continue
+            p_data = p if isinstance(p, dict) else p.model_dump() if hasattr(p, "model_dump") else {}
+            try:
+                if not _within_working_hours(p_data, start_dt, end_dt):
+                    wh_violations += 1
+            except ValueError:
+                wh_violations += 1
+    for event in scored_existing_events:
+        start_dt = _parse_utc(event["start_time_utc"])
+        end_dt = start_dt + timedelta(minutes=event["duration_minutes"])
+        for attendee in event.get("attendees", []):
             wh_checks += 1
             p = participants.get(attendee)
             if p is None:
@@ -204,6 +223,18 @@ def compute_final_score(
         start_dt = _parse_utc(event["start_time_utc"])
         end_dt = start_dt + timedelta(minutes=event["duration_minutes"])
         for attendee in request.get("attendees", []):
+            p = participants.get(attendee)
+            if p is None:
+                continue
+            p_data = p if isinstance(p, dict) else p.model_dump() if hasattr(p, "model_dump") else {}
+            if p_data.get("preferred_hours"):
+                pref_checks += 1
+                if not _within_preferred_hours(p_data, start_dt, end_dt):
+                    pref_violations += 1
+    for event in scored_existing_events:
+        start_dt = _parse_utc(event["start_time_utc"])
+        end_dt = start_dt + timedelta(minutes=event["duration_minutes"])
+        for attendee in event.get("attendees", []):
             p = participants.get(attendee)
             if p is None:
                 continue
@@ -241,6 +272,16 @@ def compute_final_score(
     else:
         efficiency = 0.0
 
+    # PATCH: Calculate completion ratio
+    completion_ratio = scheduled_count / total_requests if total_requests > 0 else 0.0
+
+    # Scale compliance scores by completion ratio
+    deadline = deadline * completion_ratio
+    working_hours = working_hours * completion_ratio
+    preference = preference * completion_ratio
+    conflicts = conflicts * completion_ratio
+
+    
     # ── 7. INVESTIGATION DISCIPLINE (HARD only) ────────────────────
     if scenario_id.upper().startswith("HARD"):
         relevant_participants = set()

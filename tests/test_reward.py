@@ -97,7 +97,7 @@ class TestComponentsSum:
         )
         expected_keys = {"completion", "deadline_compliance", "working_hours_compliance",
                          "preference_quality", "conflict_avoidance", "efficiency",
-                         "investigation_discipline"}
+                         "investigation_discipline", "stability_penalty", "recovery_credit"}
         assert set(breakdown.keys()) == expected_keys
         assert abs(sum(breakdown.values()) - score) < 0.01 or score in (0.01, 0.99)
 
