@@ -1,12 +1,11 @@
 """Standalone grader functions for OpenEnv task evaluation.
 
-Referenced from openenv.yaml tasks block. Each function grades an episode
-for a specific difficulty tier using the shared compute_final_score() function.
+Three tier graders (`grade_easy`, `grade_medium`, `grade_hard`) referenced from
+`openenv.yaml`. Multiple scenario tasks share the same grader; each call must
+receive episode `scenario_id` (top-level arg or in **kwargs from `state()`)
+so `compute_final_score` applies correct rules (e.g. HARD* investigation).
 
-The graders accept episode state and return a score in [0.01, 0.99].
-
-These functions can be imported and called directly by the OpenEnv validator:
-    from server.graders import grade_easy, grade_medium, grade_hard
+When `scenario_id` missing (unit tests), defaults: EASY / MEDIUM / HARD.
 """
 
 from __future__ import annotations
@@ -50,6 +49,23 @@ def _to_participant_dict(participants: Any) -> Dict[str, Dict]:
     return result
 
 
+def _effective_scenario_id(
+    explicit: Optional[str],
+    default: str,
+    kwargs: Dict[str, Any],
+) -> str:
+    raw = explicit if explicit is not None else kwargs.get("scenario_id")
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip().upper()
+    return default
+
+
+def _kwargs_without_scenario_id(kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(kwargs)
+    out.pop("scenario_id", None)
+    return out
+
+
 def _grade_from_state(
     all_requests: Any = None,
     calendar_state: Any = None,
@@ -78,26 +94,22 @@ def grade_easy(
     participants: Any = None,
     turn_count: int = 0,
     max_turns: int = 15,
+    inspected_participants: Optional[List[str]] = None,
+    scenario_id: Optional[str] = None,
     **kwargs,
 ) -> float:
-    """Grade an easy-tier episode.
-
-    Easy tasks evaluate basic scheduling correctness:
-    - Were all requests scheduled?
-    - Are meetings within working hours?
-    - No conflicts?
-
-    Returns:
-        Score in [0.01, 0.99].
-    """
+    """Grade easy-tier scenarios (EASY, EASY_B, EASY_C, …)."""
+    sid = _effective_scenario_id(scenario_id, "EASY", kwargs)
+    rest = _kwargs_without_scenario_id(kwargs)
     return _grade_from_state(
         all_requests=all_requests,
         calendar_state=calendar_state,
         participants=participants,
         turn_count=turn_count,
         max_turns=max_turns,
-        scenario_id="EASY",
-        **kwargs,
+        inspected_participants=inspected_participants,
+        scenario_id=sid,
+        **rest,
     )
 
 
@@ -107,26 +119,22 @@ def grade_medium(
     participants: Any = None,
     turn_count: int = 0,
     max_turns: int = 15,
+    inspected_participants: Optional[List[str]] = None,
+    scenario_id: Optional[str] = None,
     **kwargs,
 ) -> float:
-    """Grade a medium-tier episode.
-
-    Medium tasks additionally evaluate:
-    - Preference optimization
-    - Cross-timezone coordination
-    - Queue management
-
-    Returns:
-        Score in [0.01, 0.99].
-    """
+    """Grade medium-tier scenarios (MEDIUM, MEDIUM_B, MEDIUM_C, …)."""
+    sid = _effective_scenario_id(scenario_id, "MEDIUM", kwargs)
+    rest = _kwargs_without_scenario_id(kwargs)
     return _grade_from_state(
         all_requests=all_requests,
         calendar_state=calendar_state,
         participants=participants,
         turn_count=turn_count,
         max_turns=max_turns,
-        scenario_id="MEDIUM",
-        **kwargs,
+        inspected_participants=inspected_participants,
+        scenario_id=sid,
+        **rest,
     )
 
 
@@ -137,19 +145,12 @@ def grade_hard(
     turn_count: int = 0,
     max_turns: int = 15,
     inspected_participants: Optional[List[str]] = None,
+    scenario_id: Optional[str] = None,
     **kwargs,
 ) -> float:
-    """Grade a hard-tier episode.
-
-    Hard tasks additionally evaluate:
-    - Cascade management and bump sequencing
-    - Investigation discipline (did agent inspect before acting?)
-    - Trap avoidance
-    - Dynamic follow-up handling
-
-    Returns:
-        Score in [0.01, 0.99].
-    """
+    """Grade hard-tier scenarios (HARD, HARD_B, HARD_C, …)."""
+    sid = _effective_scenario_id(scenario_id, "HARD", kwargs)
+    rest = _kwargs_without_scenario_id(kwargs)
     return _grade_from_state(
         all_requests=all_requests,
         calendar_state=calendar_state,
@@ -157,6 +158,6 @@ def grade_hard(
         turn_count=turn_count,
         max_turns=max_turns,
         inspected_participants=inspected_participants,
-        scenario_id="HARD",
-        **kwargs,
+        scenario_id=sid,
+        **rest,
     )

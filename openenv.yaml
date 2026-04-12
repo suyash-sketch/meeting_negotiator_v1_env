@@ -19,11 +19,29 @@ tags:
 
 tasks:
   - id: "EASY"
-    description: "Basic scheduling with simple working hour constraints. Scenarios: EASY, EASY_B, EASY_C."
+    description: "Easy — The Empty Slate: single pending request, UTC participants, shared prefs."
+    grader: server.graders.grade_easy
+  - id: "EASY_B"
+    description: "Easy — The Timezone Overlap: EST/PST overlap vs non-overlapping preferred windows."
+    grader: server.graders.grade_easy
+  - id: "EASY_C"
+    description: "Easy — The Lunch Break Gap: tri-party with IST participant and lunch gap constraints."
     grader: server.graders.grade_easy
   - id: "MEDIUM"
-    description: "Multi-timezone coordination with preference traps and recovery mechanics. Scenarios: MEDIUM, MEDIUM_B, MEDIUM_C."
+    description: "Medium — The Greedy Preference Trap: multi-request handoff ordering and follow-ups."
+    grader: server.graders.grade_medium
+  - id: "MEDIUM_B"
+    description: "Medium — The Blocker Sandwich: protected placeholder displacement and recovery work."
+    grader: server.graders.grade_medium
+  - id: "MEDIUM_C"
+    description: "Medium — The Bump Chain: urgent placement bumps low-priority event and recovery task."
     grader: server.graders.grade_medium
   - id: "HARD"
-    description: "Priority cascades, protected-event escalations, partial observability, trap actions, and recovery chains. Scenarios: HARD, HARD_B, HARD_C."
+    description: "Hard — The Zero-Sum Domino Cascade: dense cascade, partial observability, mid-episode inject."
+    grader: server.graders.grade_hard
+  - id: "HARD_B"
+    description: "Hard — The 60-Minute VIP Bottleneck: protected CEO block, executive recovery sync."
+    grader: server.graders.grade_hard
+  - id: "HARD_C"
+    description: "Hard — The Triple Threat Cascade: trap bump, multi-day recovery, inspection payoff."
     grader: server.graders.grade_hard

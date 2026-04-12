@@ -38,7 +38,7 @@ Fully deterministic reward. Zero LLM calls at runtime.
 
 5. **8-action investigation / scheduling toolkit.** Beyond schedule/reschedule, the agent can probe conflicts before committing (`ListConflicts`), reveal participant details (`InspectParticipant`), query the scoring policy (`GetPolicy`), and undo the last action (`UndoLastAction`). The action space mirrors a real scheduling assistant's capability set.
 
-6. **Decomposed reward with per-step transparency.** Every step returns `last_reward_components`. The terminal `reward_breakdown` includes completion, deadline, working-hours, preference, conflict, efficiency, investigation, `stability_penalty`, and `recovery_credit`. An agent — and a developer — can audit every point of every episode.
+6. **Decomposed reward with per-step transparency.** Every step returns `last_reward_components`. The terminal `reward_breakdown` includes completion, deadline compliance, preference quality, efficiency, investigation discipline, `stability_penalty`, and `recovery_credit`. Working-hour overlap and double-bookings are enforced by the action layer (not scored again at submit).
 
 ### Example: `HARD — The Zero-Sum Domino Cascade`
 
@@ -68,17 +68,19 @@ Greedy agents that try to schedule `REQ-URGENT-ALL-HANDS` directly hit a blockin
 
 > **Note:** Live model inference baselines are still limited. The table below shows the current **verified reference-plan scores** from `scripts/verify_scenarios.py` for the repository state on disk. These are known-good baseline plans, not formal optimality proofs.
 
-| Scenario | Tier | Oracle Score | Unavoidable Penalty | Notes |
+| Scenario | Tier | Oracle Score | Main score drains | Notes |
 |---|---|---|---|---|
-| `EASY` — The Empty Slate | easy | **0.989** | — | UTC participants, shared prefs. Near-perfect achievable. |
-| `EASY_B` — The Timezone Overlap | easy | **0.883** | −0.10 pref | EST/PST overlap window is outside both preferred hours. |
-| `EASY_C` — The Lunch Break Gap | easy | **0.917** | −0.07 pref | IST-offset constraint; preferred window narrowly satisfied. |
-| `MEDIUM` — The Greedy Preference Trap | medium | **0.948** | −0.04 pref. | Best path is `REQ-MED-2 @ 16:00Z` then `REQ-MED-1 @ 17:00Z`; greedy ordering burns the better handoff slot. |
-| `MEDIUM_B` — The Blocker Sandwich | medium | **0.923** | stability −0.02 | Day-2 placement at `14:00Z` displaces a protected placeholder and requires explicit recovery work. |
-| `MEDIUM_C` — The Bump Chain | medium | **0.935** | stability −0.02 | Urgent placement bumps Bob's low event and spawns a recovery task that must be cleared. |
-| `HARD` — The Zero-Sum Domino Cascade | hard | **0.504** | large pref/coverage loss | Current hard path is intentionally partial-credit and demands backward planning through a dense cascade. |
-| `HARD_B` — The 60-Minute VIP Bottleneck | hard | **0.878** | stability −0.02 | Urgent 3-way sync now bumps the protected CEO block, creating both a bumped replacement request and an executive recovery sync. |
-| `HARD_C` — The Triple Threat Cascade | hard | **0.885** | stability −0.04 | Day-1 trap bump forces same-day CEO/Bob recovery, which then bumps Bob low into day 2; inspecting CEO lets recovery land at 09:00Z for extra preference credit. |
+| `EASY` — The Empty Slate | easy | **0.978** | efficiency | UTC participants, shared prefs; reference plan uses 2 turns. |
+| `EASY_B` — The Timezone Overlap | easy | **0.817** | preference | EST/PST overlap UTC slot sits outside both preferred windows → zero pref credit on that check. |
+| `EASY_C` — The Lunch Break Gap | easy | **0.867** | preference | IST + lunch gap; oracle path keeps partial preference credit. |
+| `MEDIUM` — The Greedy Preference Trap | medium | **0.915** | preference, efficiency | Best path `REQ-MED-2 @ 16:00Z` then `REQ-MED-1 @ 17:00Z`; still leaves some preference / step-efficiency gap vs ceiling. |
+| `MEDIUM_B` — The Blocker Sandwich | medium | **0.869** | stability, preference | Protected displacement + recovery; stability penalty partly offset by recovery credit. |
+| `MEDIUM_C` — The Bump Chain | medium | **0.890** | stability, preference | Bump chain + recovery resolution. |
+| `HARD` — The Zero-Sum Domino Cascade | hard | **0.761** | preference, investigation, efficiency | Long chain: partial inspection ratio, pref loss, many steps burn efficiency. |
+| `HARD_B` — The 60-Minute VIP Bottleneck | hard | **0.787** | preference, stability, efficiency | CEO bump cascade, recovery, heavy inspect budget. |
+| `HARD_C` — The Triple Threat Cascade | hard | **0.793** | stability, preference | Double stability hit; recovery credit helps; trap + day-2 recovery. |
+
+Scores from `scripts/verify_scenarios.py` on the bundled oracle action traces (repository state on disk).
 
 **To run the oracle audit locally:**
 ```bash
@@ -179,35 +181,38 @@ class MeetingNegotiatorV1Observation(BaseModel):
 
 ### Base components + stability/recovery adjustments (clamped to [0.01, 0.99])
 
+The first five rows below sum to **1.0**; working hours and same-attendee overlaps are **not** in the terminal score (the environment rejects invalid `ScheduleNew` / `RescheduleExisting`).
+
 | # | Component | Weight | What it measures |
 |---|-----------|--------|-----------------|
-| 1 | Completion | 0.35 | Fraction of all requests scheduled |
-| 2 | Deadline Compliance | 0.20 | Fraction of meetings finishing before their deadline |
-| 3 | Working Hours | 0.15 | Fraction of meetings within every attendee's working hours |
-| 4 | Preference Quality | 0.10 | Fraction of meetings within preferred hours |
-| 5 | Conflict Avoidance | 0.10 | Penalizes double-bookings in final calendar |
-| 6 | Efficiency | 0.05 | `optimal_steps / actual_turns`, scaled by completion |
-| 7 | Investigation Discipline | 0.05 | Fraction of key HARD participants inspected before or during the scheduling chain |
-| 8 | Stability Penalty | variable | Harmful transitions after disturbing protected meetings |
-| 9 | Recovery Credit | variable | Credit for resolving recovery work spawned by cascades |
+| 1 | Completion | 0.40 | Fraction of all requests scheduled |
+| 2 | Deadline Compliance | 0.25 | Scheduled events end before each request’s deadline (scaled down if some requests unscheduled) |
+| 3 | Preference Quality | 0.15 | Fraction of preference checks satisfied (soft prefs); scaled down if incomplete schedule |
+| 4 | Efficiency | 0.10 | `(max_turns - turn_count) / max_turns` — spare steps left when submitting |
+| 5 | Investigation Discipline | 0.10 | HARD*: fraction of relevant attendees inspected; non-HARD episodes get full weight |
+| 6 | Stability Penalty | variable (subtracted) | Strained / recovery_needed / escalated state and triggered follow-ups |
+| 7 | Recovery Credit | variable (added) | Resolved recovery request IDs (capped) |
 
-**Per-step penalties** (dense reward during episode):
+\*HARD, `HARD_B`, `HARD_C`, etc.
+
+**Per-step penalties** (dense reward during episode; see `server/reward.py`):
 
 | Event | Penalty |
 |-------|---------|
 | Step cost | −0.01 |
 | Invalid action | −0.05 |
-| Conflict attempt (blocking priority) | −0.03 |
-| Preference violation (per attendee) | −0.02 |
+| Conflict attempt (blocking priority) | −0.05 |
+| Preference violation (per attendee) | −0.01 |
+| Investigation over budget (HARD) | −0.02 |
 
 **Per-step bonuses:**
 
 | Event | Bonus |
 |-------|-------|
-| Successful `ScheduleNew` | +0.10 |
-| Successful `RescheduleExisting` | +0.05 |
-| Priority bonus (urgent > medium > low) | up to +0.08 |
-| Early deadline (>30 min margin) | +0.03 |
+| Successful `ScheduleNew` | +0.25 |
+| Successful `RescheduleExisting` | +0.10 |
+| Priority bonus (scaled by priority tier) | up to +0.10 |
+| Early deadline margin | +0.05 |
 
 ---
 
@@ -227,27 +232,27 @@ Each scenario supports `reset(seed=N)`. Surface features (participant names, mee
 
 ### Easy (3 scenarios) — no calendar blockers, single timezone overlap
 
-| ID | Name | Catch | Max Score |
+| ID | Name | Catch | Ref. oracle score |
 |---|---|---|---|
-| `EASY` | The Empty Slate | Single 1:1 UTC meeting, no blockers. Tests basic constraint parsing. | 0.99 |
-| `EASY_B` | The Timezone Overlap | EST/PST participants with non-overlapping preferred windows. Agent must find the UTC intersection window. | 0.95 |
-| `EASY_C` | The Lunch Break Gap | 3-party meeting with IST participant. Working hours cross the Alice/Bob lunch gap. IST offset = 5.5h. | 0.95 |
+| `EASY` | The Empty Slate | Single 1:1 UTC meeting, no blockers. Tests basic constraint parsing. | 0.98 |
+| `EASY_B` | The Timezone Overlap | EST/PST participants with non-overlapping preferred windows. Agent must find the UTC intersection window. | 0.82 |
+| `EASY_C` | The Lunch Break Gap | 3-party meeting with IST participant. Working hours cross the Alice/Bob lunch gap. IST offset = 5.5h. | 0.87 |
 
 ### Medium (3 scenarios) — multi-request, preference traps, protected recovery work
 
-| ID | Name | Catch | Max Score |
+| ID | Name | Catch | Ref. oracle score |
 |---|---|---|---|
-| `MEDIUM` | The Greedy Preference Trap | Two-request ordering puzzle: `REQ-MED-2 @ 16:00Z` and `REQ-MED-1 @ 17:00Z` is the good path; greedy first-slot ordering loses preference quality. | 0.95 |
-| `MEDIUM_B` | The Blocker Sandwich | Urgent 3-party meeting only works on day 2 by displacing a protected hold and then resolving explicit recovery work. | 0.93 |
-| `MEDIUM_C` | The Bump Chain | Urgent meeting displaces Bob's low-priority event and also creates a separate recovery obligation that must be scheduled. | 0.94 |
+| `MEDIUM` | The Greedy Preference Trap | Two-request ordering puzzle: `REQ-MED-2 @ 16:00Z` and `REQ-MED-1 @ 17:00Z` is the good path; greedy first-slot ordering loses preference quality. | 0.92 |
+| `MEDIUM_B` | The Blocker Sandwich | Urgent 3-party meeting only works on day 2 by displacing a protected hold and then resolving explicit recovery work. | 0.87 |
+| `MEDIUM_C` | The Bump Chain | Urgent meeting displaces Bob's low-priority event and also creates a separate recovery obligation that must be scheduled. | 0.89 |
 
 ### Hard (3 scenarios) — partial observability, protected cascades, recovery chains
 
-| ID | Name | Catch | Max Score |
+| ID | Name | Catch | Ref. oracle score |
 |---|---|---|---|
-| `HARD` | The Zero-Sum Domino Cascade | Backward-planned cascade across 3 priority levels with hidden preferences and narrow partial-credit margins. | 0.51 |
-| `HARD_B` | The 60-Minute VIP Bottleneck | `REQ-HARDB-ALL @ 17:00Z` can displace the protected CEO block, but that creates both a bumped replacement request and an executive recovery sync. | 0.88 |
-| `HARD_C` | The Triple Threat Cascade | Day-1 urgent board prep only fits at 15:00Z, forcing a 3-stage cascade: rebook CEO/Bob trap at 16:00Z, recover Bob's bumped low task on day 2, then place CEO/Alice recovery in CEO's preferred morning window. | 0.89 |
+| `HARD` | The Zero-Sum Domino Cascade | Backward-planned cascade across 3 priority levels with hidden preferences and long step count. | 0.76 |
+| `HARD_B` | The 60-Minute VIP Bottleneck | `REQ-HARDB-ALL @ 17:00Z` can displace the protected CEO block, but that creates both a bumped replacement request and an executive recovery sync. | 0.79 |
+| `HARD_C` | The Triple Threat Cascade | Day-1 urgent board prep only fits at 15:00Z, forcing a 3-stage cascade: rebook CEO/Bob trap at 16:00Z, recover Bob's bumped low task on day 2, then place CEO/Alice recovery in CEO's preferred morning window. | 0.79 |
 
 ---
 

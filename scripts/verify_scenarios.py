@@ -85,7 +85,7 @@ ORACLE_PLANS: List[Tuple[str, float, List[Step]]] = [
     # Two-request version. The greedy move is to schedule the 3-party sync at
     # 16:00Z, which burns Priya/Jordan's best joint slot. The best verified path
     # is to place the handoff first at 16:00Z, then the 3-party sync at 17:00Z.
-    ("MEDIUM", 0.94, [
+    ("MEDIUM", 0.90, [
         Step("ScheduleNew", "REQ-MED-2", "2026-01-15T16:00Z"),
         Step("ScheduleNew", "REQ-MED-1", "2026-01-15T17:00Z"),
         Step("SubmitFinalCalendar"),
@@ -121,7 +121,7 @@ ORACLE_PLANS: List[Tuple[str, float, List[Step]]] = [
     # and Alice/Bob cascade, schedules the urgent all-hands at 14:00Z, absorbs
     # the injected emergency debrief, re-slots the bumped Dev work, then places
     # the CTO sync late.
-    ("HARD", 0.80, [
+    ("HARD", 0.75, [
         Step("InspectParticipant", "CEO"),
         Step("InspectParticipant", "Alice"),
         Step("RescheduleExisting", "EVT-ALICE-DEV-HIGH", "2026-01-15T17:00Z"),
@@ -138,7 +138,7 @@ ORACLE_PLANS: List[Tuple[str, float, List[Step]]] = [
     # CEO block, which injects a bumped replacement request plus an executive
     # recovery sync. The best verified path resolves both follow-ons and then
     # places the decoy on day 2.
-    ("HARD_B", 0.87, [
+    ("HARD_B", 0.78, [
         Step("InspectParticipant", "CEO"),
         Step("ScheduleNew", "REQ-HARDB-ALL", "2026-01-15T17:00Z"),
         Step("RescheduleExisting", "EVT-ALICE-MID", "2026-01-15T09:00Z"),
@@ -158,7 +158,7 @@ ORACLE_PLANS: List[Tuple[str, float, List[Step]]] = [
     # CEO/Bob trap block, which must be rebooked at 16:00Z and in turn bumps
     # Bob's low-priority work into day 2. Best-known path inspects CEO so the
     # final CEO/Alice recovery lands in CEO's preferred morning window.
-    ("HARD_C", 0.88, [
+    ("HARD_C", 0.78, [
         Step("InspectParticipant", "CEO"),
         Step("ScheduleNew", "REQ-URGENT-DAY1", "2026-01-15T15:00Z"),
         Step("ScheduleNew", "REQ-BUMP-EVT-TRAP-BUMP", "2026-01-15T16:00Z"),

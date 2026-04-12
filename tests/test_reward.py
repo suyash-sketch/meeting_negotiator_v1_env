@@ -73,9 +73,11 @@ class TestPreferencePenalty:
         assert breakdown["preference_quality"] < 0.10
 
 
-class TestConflictPenalty:
-    def test_double_booking(self):
-        score, breakdown = compute_final_score(
+class TestConflictsNotScored:
+    """Terminal calendar from real env cannot double-book; scorer ignores overlap."""
+
+    def test_double_booking_has_no_conflict_component(self):
+        _, breakdown = compute_final_score(
             all_requests=[_make_request(), _make_request(req_id="R2")],
             calendar_state=[
                 _make_event(start="2026-01-15T10:00Z"),
@@ -84,7 +86,8 @@ class TestConflictPenalty:
             participants={"Alice": _make_participant()},
             turn_count=1, max_turns=9,
         )
-        assert breakdown["conflict_avoidance"] < 0.10
+        assert "conflict_avoidance" not in breakdown
+        assert breakdown["completion"] >= 0.39
 
 
 class TestComponentsSum:
@@ -95,9 +98,15 @@ class TestComponentsSum:
             participants={"Alice": _make_participant()},
             turn_count=1, max_turns=9,
         )
-        expected_keys = {"completion", "deadline_compliance", "working_hours_compliance",
-                         "preference_quality", "conflict_avoidance", "efficiency",
-                         "investigation_discipline", "stability_penalty", "recovery_credit"}
+        expected_keys = {
+            "completion",
+            "deadline_compliance",
+            "preference_quality",
+            "efficiency",
+            "investigation_discipline",
+            "stability_penalty",
+            "recovery_credit",
+        }
         assert set(breakdown.keys()) == expected_keys
         assert abs(sum(breakdown.values()) - score) < 0.01 or score in (0.01, 0.99)
 

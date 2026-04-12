@@ -1,16 +1,17 @@
 """Decomposed reward computation for Meeting Negotiator V1.
 
-9 named components, max 1.00:
+Terminal score uses 7 positive components (max 1.00 before penalties/bonus):
 
-  1. COMPLETION        (0.35) — all requests scheduled
-  2. DEADLINE          (0.20) — meetings finish before deadline
-  3. WORKING_HOURS     (0.15) — all within working hours
-  4. PREFERENCE        (0.10) — preferred hours respected
-  5. CONFLICTS         (0.10) — no double-bookings
-  6. EFFICIENCY        (0.05) — low step count
-  7. INVESTIGATION     (0.05) — investigated before acting (HARD only)
-  8. STABILITY         (penalty) — harmful transitions reduce score
-  9. RECOVERY          (bonus) — explicit recovery wins back some trust
+  1. COMPLETION    (0.40) — fraction of requests scheduled
+  2. DEADLINE      (0.25) — scheduled events end before request deadlines
+  3. PREFERENCE    (0.15) — preferred hours (soft) when prefs exist
+  4. EFFICIENCY    (0.10) — spare turns remaining vs max_turns
+  5. INVESTIGATION (0.10) — HARD: inspect relevant participants; else full credit
+  6. STABILITY     (penalty) — strained / recovery / escalated / followups
+  7. RECOVERY      (bonus) — resolved recovery requests
+
+Working hours and overlap conflicts are not scored here: the environment rejects
+illegal schedules, so terminal calendar cannot contain those violations.
 
 All deterministic. No model loading. Perfect run → 0.99.
 """
@@ -23,14 +24,12 @@ from typing import Dict, List, Optional, Tuple, Any
 
 PRIORITY_ORDER = {"low": 0, "medium": 1, "high": 2, "urgent": 3}
 
-# ── Per-Component Weights ──────────────────────────────────────────────
-W_COMPLETION = 0.35
-W_DEADLINE = 0.20
-W_WORKING_HOURS = 0.15
-W_PREFERENCE = 0.10
-W_CONFLICTS = 0.10
-W_EFFICIENCY = 0.05
-W_INVESTIGATION = 0.05
+# ── Per-Component Weights (sum = 1.0; WH / conflicts enforced by env, not scored)
+W_COMPLETION = 0.40
+W_DEADLINE = 0.25
+W_PREFERENCE = 0.15
+W_EFFICIENCY = 0.10
+W_INVESTIGATION = 0.10
 
 # ── Step reward constants ──────────────────────────────────────────────
 STEP_PENALTY = 0.01
@@ -94,16 +93,6 @@ def _within_blocks(local_start: datetime, local_end: datetime, blocks: List[str]
             if local_start >= block_start and local_end <= block_end:
                 return True
     return False
-
-
-def _within_working_hours(participant_data: Dict, start_dt: datetime, end_dt: datetime) -> bool:
-    try:
-        tz = _tz_offset(participant_data.get("timezone", "UTC"))
-    except ValueError:
-        return False
-    local_start = start_dt.astimezone(tz)
-    local_end = end_dt.astimezone(tz)
-    return _within_blocks(local_start, local_end, participant_data.get("working_hours", []))
 
 
 def _within_preferred_hours(participant_data: Dict, start_dt: datetime, end_dt: datetime) -> bool:
@@ -171,48 +160,7 @@ def compute_final_score(
 
     scored_existing_events = modified_existing_events or []
 
-    # ── 3. WORKING HOURS COMPLIANCE ────────────────────────────────
-    wh_violations = 0
-    wh_checks = 0
-    for request in all_requests:
-        event = scheduled_by_request.get(request.get("request_id"))
-        if event is None:
-            continue
-        start_dt = _parse_utc(event["start_time_utc"])
-        end_dt = start_dt + timedelta(minutes=event["duration_minutes"])
-        for attendee in request.get("attendees", []):
-            wh_checks += 1
-            p = participants.get(attendee)
-            if p is None:
-                wh_violations += 1
-                continue
-            p_data = p if isinstance(p, dict) else p.model_dump() if hasattr(p, "model_dump") else {}
-            try:
-                if not _within_working_hours(p_data, start_dt, end_dt):
-                    wh_violations += 1
-            except ValueError:
-                wh_violations += 1
-    for event in scored_existing_events:
-        start_dt = _parse_utc(event["start_time_utc"])
-        end_dt = start_dt + timedelta(minutes=event["duration_minutes"])
-        for attendee in event.get("attendees", []):
-            wh_checks += 1
-            p = participants.get(attendee)
-            if p is None:
-                wh_violations += 1
-                continue
-            p_data = p if isinstance(p, dict) else p.model_dump() if hasattr(p, "model_dump") else {}
-            try:
-                if not _within_working_hours(p_data, start_dt, end_dt):
-                    wh_violations += 1
-            except ValueError:
-                wh_violations += 1
-    if wh_checks > 0:
-        working_hours = W_WORKING_HOURS * (1.0 - wh_violations / wh_checks)
-    else:
-        working_hours = W_WORKING_HOURS
-
-    # ── 4. PREFERENCE QUALITY ──────────────────────────────────────
+    # ── 3. PREFERENCE QUALITY ──────────────────────────────────────
     pref_violations = 0
     pref_checks = 0
     for request in all_requests:
@@ -247,41 +195,19 @@ def compute_final_score(
     else:
         preference = W_PREFERENCE
 
-    # ── 5. CONFLICT AVOIDANCE ──────────────────────────────────────
-    conflict_count = 0
-    events = list(calendar_state)
-    for i in range(len(events)):
-        for j in range(i + 1, len(events)):
-            a = events[i]
-            b = events[j]
-            if not set(a.get("attendees", [])).intersection(b.get("attendees", [])):
-                continue
-            a_start = _parse_utc(a["start_time_utc"])
-            a_end = a_start + timedelta(minutes=a["duration_minutes"])
-            b_start = _parse_utc(b["start_time_utc"])
-            b_end = b_start + timedelta(minutes=b["duration_minutes"])
-            if max(a_start, b_start) < min(a_end, b_end):
-                conflict_count += 1
-    conflicts = W_CONFLICTS * max(0.0, 1.0 - conflict_count * 0.5)
-
-    # ── 6. EFFICIENCY ──────────────────────────────────────────────
+    # ── 4. EFFICIENCY ──────────────────────────────────────────────
     if max_turns > 0:
         ratio = min(1.0, (max_turns - turn_count) / max_turns)
         efficiency = W_EFFICIENCY * max(0.0, ratio)
     else:
         efficiency = 0.0
 
-    # PATCH: Calculate completion ratio
+    # Scale partial-schedule terms by completion ratio (incomplete episode)
     completion_ratio = scheduled_count / total_requests if total_requests > 0 else 0.0
-
-    # Scale compliance scores by completion ratio
     deadline = deadline * completion_ratio
-    working_hours = working_hours * completion_ratio
     preference = preference * completion_ratio
-    conflicts = conflicts * completion_ratio
 
-    
-    # ── 7. INVESTIGATION DISCIPLINE (HARD only) ────────────────────
+    # ── 5. INVESTIGATION DISCIPLINE (HARD only) ────────────────────
     if scenario_id.upper().startswith("HARD"):
         relevant_participants = set()
         for r in all_requests:
@@ -294,7 +220,7 @@ def compute_final_score(
     else:
         investigation = W_INVESTIGATION  # full credit for non-hard tasks
 
-    # ── 8. STABILITY PENALTY ──────────────────────────────────────
+    # ── 6. STABILITY PENALTY ──────────────────────────────────────
     followup_count = len(triggered_followups or [])
     stability_penalty = 0.0
     if system_state == "strained":
@@ -307,16 +233,14 @@ def compute_final_score(
     if escalation_budget_remaining < 0:
         stability_penalty += min(0.04, abs(escalation_budget_remaining) * 0.02)
 
-    # ── 9. RECOVERY CREDIT ────────────────────────────────────────
+    # ── 7. RECOVERY CREDIT ────────────────────────────────────────
     recovery_credit = min(0.05, len(resolved_recovery_requests or []) * 0.025)
 
     # ── TOTAL ──────────────────────────────────────────────────────
     breakdown = {
         "completion": round(completion, 4),
         "deadline_compliance": round(deadline, 4),
-        "working_hours_compliance": round(working_hours, 4),
         "preference_quality": round(preference, 4),
-        "conflict_avoidance": round(conflicts, 4),
         "efficiency": round(efficiency, 4),
         "investigation_discipline": round(investigation, 4),
         "stability_penalty": round(-stability_penalty, 4),
@@ -324,8 +248,7 @@ def compute_final_score(
     }
 
     total = (
-        completion + deadline + working_hours + preference
-        + conflicts + efficiency + investigation
+        completion + deadline + preference + efficiency + investigation
         - stability_penalty + recovery_credit
     )
     score = round(min(0.99, max(0.01, total)), 4)

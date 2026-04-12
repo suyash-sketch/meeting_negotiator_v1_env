@@ -154,8 +154,8 @@ class TestRewardDecomposition:
         ))
         obs = env.step(MeetingNegotiatorV1Action(command="SubmitFinalCalendar"))
         assert obs.reward_breakdown is not None
-        assert obs.reward_breakdown["working_hours_compliance"] < 0.15
-        assert obs.reward_breakdown["preference_quality"] < 0.10
+        assert "working_hours_compliance" not in obs.reward_breakdown
+        assert obs.reward_breakdown["preference_quality"] < 0.12
 
 
 class TestDynamicFollowups:
