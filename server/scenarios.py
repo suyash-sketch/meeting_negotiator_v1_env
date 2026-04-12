@@ -197,18 +197,13 @@ def scenario_medium() -> ScenarioSpec:
         duration_minutes=60, priority="medium",
         deadline_utc="2026-01-15T18:00Z", title="Priya-Jordan Handoff",
     )
-    followup = MeetingRequest(
-        request_id="REQ-MED-FU1", attendees=["Priya", "Alex"],
-        duration_minutes=30, priority="low",
-        deadline_utc="2026-01-15T20:00Z", title="Follow-up Notes",
-    )
     return ScenarioSpec(
         scenario_id="MEDIUM", description="The Greedy Preference Trap",
         current_time_utc="2026-01-15T15:00Z",
         participants=participants, calendar_state=calendar_state,
         pending_requests=[req_1, req_2],
-        all_requests=[req_1, req_2, followup],
-        max_turns=12, dynamic_followups=[followup],
+        all_requests=[req_1, req_2,],
+        max_turns=12,
     )
 
 
@@ -448,7 +443,7 @@ def scenario_hard_b() -> ScenarioSpec:
         # Block the only 3-way overlap slot with an unbumpable meeting
         ScheduledEvent(
             event_id="EVT-CEO-URGENT", attendees=["CEO", "Alice"],
-            start_time_utc="2026-01-15T17:00Z", duration_minutes=60, priority="urgent"
+            start_time_utc="2026-01-15T17:00Z", duration_minutes=60, priority="high"
         ),
         # Block Alice earlier so she can't easily move her CEO meeting backwards
         ScheduledEvent(

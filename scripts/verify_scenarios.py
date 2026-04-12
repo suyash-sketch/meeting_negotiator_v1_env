@@ -82,72 +82,85 @@ ORACLE_PLANS: List[Tuple[str, float, List[Step]]] = [
     ]),
 
     # ── MEDIUM: The Greedy Preference Trap ─────────────────────────────
-    # Priya blocked 09:00-16:00. Preferred: 16:00-17:00 GMT.
-    # Jordan preferred: 11:00-12:00 EST = 16:00-17:00 GMT
-    # Alex preferred: 09:00-10:00 PST = 17:00-18:00 GMT
-    # Best 3-party slot: 16:00 GMT
-    ("MEDIUM", 0.70, [
-        Step("CheckAvailability", "REQ-MED-1", "2026-01-15T16:00Z"),
-        Step("ScheduleNew", "REQ-MED-1", "2026-01-15T16:00Z"),
-        Step("ScheduleNew", "REQ-MED-2", "2026-01-15T17:00Z"),
+    # Two-request version. The greedy move is to schedule the 3-party sync at
+    # 16:00Z, which burns Priya/Jordan's best joint slot. The best verified path
+    # is to place the handoff first at 16:00Z, then the 3-party sync at 17:00Z.
+    ("MEDIUM", 0.94, [
+        Step("ScheduleNew", "REQ-MED-2", "2026-01-15T16:00Z"),
+        Step("ScheduleNew", "REQ-MED-1", "2026-01-15T17:00Z"),
         Step("SubmitFinalCalendar"),
     ]),
 
     # ── MEDIUM_B: The Blocker Sandwich ─────────────────────────────────
-    # Alice (GMT) and Bob (GMT) work from 09:00Z. Dev (IST) works from 08:30Z.
-    # Both blockers start at 14:00Z (Alice high) and 16:00Z (Bob medium).
-    # Pre-block window: 09:00-14:00Z. Optimal slot: 13:00Z (1h, all three free,
-    # and 13:00-14:00Z is within Alice's preferred 13:00-15:00 GMT).
+    # Day 1 has no valid full overlap: Alice is blocked 14:00-16:00Z, Bob at
+    # 16:00-17:00Z, Dev at 13:00-14:00Z. The actual solution is day 2 at 14:00Z,
+    # where a low-priority placeholder for Alice+Bob can be displaced and then
+    # recovered at 15:00Z for the best medium-tier score.
     ("MEDIUM_B", 0.75, [
-        Step("ListConflicts", "REQ-MEDB-1", "2026-01-15T13:00Z"),
-        Step("ScheduleNew", "REQ-MEDB-1", "2026-01-15T13:00Z"),
+        Step("ListConflicts", "REQ-MEDB-1", "2026-01-16T14:00Z"),
+        Step("ScheduleNew", "REQ-MEDB-1", "2026-01-16T14:00Z"),
+        Step("ScheduleNew", "REQ-MEDB-HOLD", "2026-01-16T15:00Z"),
+        Step("ScheduleNew", "REQ-MEDB-RECOVERY", "2026-01-16T17:00Z"),
         Step("SubmitFinalCalendar"),
     ]),
 
     # ── MEDIUM_C: The Bump Chain ────────────────────────────────────────
-    # Urgent Review (Alice+Bob) must finish by 15:00Z → schedule at 14:00Z (bumps Bob low)
-    # Bumped REQ-BOB-LOW must fit before 17:00Z → schedule at 15:00Z
+    # Urgent Review (Alice+Bob) must finish by 15:00Z → schedule at 14:00Z
+    # (bumps Bob low). Bob is blocked for the rest of day 1 and from 10:00Z on
+    # day 2, so the bumped low-priority event has exactly one clean recovery slot:
+    # 09:00Z on day 2.
     ("MEDIUM_C", 0.78, [
         Step("ScheduleNew", "REQ-MEDC-URG", "2026-01-15T14:00Z"),  # bumps EVT-BOB-LOW
-        Step("ScheduleNew", "REQ-BOB-LOW", "2026-01-15T15:00Z"),
+        Step("ScheduleNew", "REQ-MEDC-RECOVERY", "2026-01-15T15:00Z"),
+        Step("ScheduleNew", "REQ-BOB-LOW", "2026-01-16T09:00Z"),
         Step("SubmitFinalCalendar"),
     ]),
 
     # ── HARD: The Zero-Sum Domino Cascade ──────────────────────────────
-    # Must inspect preferreds first (hidden on HARD).
-    # Step-through: shift Alice-Dev to 17:00, shift Alice-Bob to 16:00, schedule All-Hands at 14:00
-    # Re-slot Dev low, schedule CTO sync late.
-    ("HARD", 0.50, [  # unavoidable preference penalties; 0.50 = minimum viable
+    # Current best-known path inspects key participants, performs the Alice/Dev
+    # and Alice/Bob cascade, schedules the urgent all-hands at 14:00Z, absorbs
+    # the injected emergency debrief, re-slots the bumped Dev work, then places
+    # the CTO sync late.
+    ("HARD", 0.80, [
         Step("InspectParticipant", "CEO"),
         Step("InspectParticipant", "Alice"),
-        Step("RescheduleExisting", "EVT-ALICE-DEV-URGENT", "2026-01-15T17:00Z"),
-        Step("RescheduleExisting", "EVT-ALICE-BOB-URGENT", "2026-01-15T16:00Z"),
+        Step("RescheduleExisting", "EVT-ALICE-DEV-HIGH", "2026-01-15T17:00Z"),
+        Step("RescheduleExisting", "EVT-ALICE-BOB-HIGH", "2026-01-15T16:00Z"),
         Step("ScheduleNew", "REQ-URGENT-ALL-HANDS", "2026-01-15T14:00Z"),
+        Step("ScheduleNew", "REQ-HARD-FU1", "2026-01-15T18:00Z"),
         Step("ScheduleNew", "REQ-BUMPED-DEV", "2026-01-15T09:00Z"),
         Step("ScheduleNew", "REQ-CTO-SYNC", "2026-01-15T21:00Z"),
         Step("SubmitFinalCalendar"),
     ]),
 
-    # ── HARD_B: The VIP No-Bump Gridlock ───────────────────────────────
-    # CEO VIP: 14:00-17:00Z (urgent, unbumpable). Alice train: 16:00-18:00Z (high).
-    # Board Prep (CEO+Alice+Bob): must go before 14:00 or after 17:00+CEO work ends (17:00 EST = 22:00Z).
-    # Sprint Close (Alice+Bob): must go before Alice train at 16:00.
-    ("HARD_B", 0.55, [
+    # ── HARD_B: The 60-Minute VIP Bottleneck ───────────────────────────
+    # The current version allows the urgent 3-way sync to displace the protected
+    # CEO block, which injects a bumped replacement request plus an executive
+    # recovery sync. The best verified path resolves both follow-ons and then
+    # places the decoy on day 2.
+    ("HARD_B", 0.87, [
         Step("InspectParticipant", "CEO"),
-        Step("InspectParticipant", "Alice"),
-        Step("ScheduleNew", "REQ-HARDB-2", "2026-01-15T14:00Z"),   # Sprint Close: Alice+Bob before train
-        Step("ScheduleNew", "REQ-HARDB-1", "2026-01-15T09:00Z"),   # Board Prep: before VIP
+        Step("ScheduleNew", "REQ-HARDB-ALL", "2026-01-15T17:00Z"),
+        Step("RescheduleExisting", "EVT-ALICE-MID", "2026-01-15T09:00Z"),
+        Step("ScheduleNew", "REQ-BUMP-EVT-CEO-URGENT", "2026-01-15T16:00Z"),
+        Step("InspectParticipant", "CTO"),
+        Step("InspectParticipant", "CEO"),
+        Step("InspectParticipant", "CTO"),
+        Step("ScheduleNew", "REQ-HARDB-EXEC-RECOVERY", "2026-01-15T18:00Z"),
+        Step("InspectParticipant", "CEO"),
+        Step("InspectParticipant", "CTO"),
+        Step("ScheduleNew", "REQ-HARDB-DECOY", "2026-01-16T17:00Z"),
         Step("SubmitFinalCalendar"),
     ]),
 
-    # ── HARD_C: The Decoy Trap ──────────────────────────────────────────
-    # Trap: scheduling REQ-TRAP at 15:00 (bumps decoy) blocks REQ-REAL (needs Dev, who blocks 14-16Z).
-    # Correct: schedule REQ-REAL first after Dev's blocker ends at 16:00Z, then REQ-TRAP elsewhere.
+    # ── HARD_C: The 48-Hour Blind Cascade ───────────────────────────────
+    # Current hard scenario has one urgent three-way meeting on day 1. It only
+    # fits at 15:00Z by displacing the protected trap block, which then creates
+    # an explicit board-recovery sync that should be cleared before submission.
     ("HARD_C", 0.55, [
-        Step("InspectParticipant", "Dev"),
-        Step("ListConflicts", "REQ-HARDC-REAL", "2026-01-15T16:00Z"),
-        Step("ScheduleNew", "REQ-HARDC-REAL", "2026-01-15T16:00Z"),
-        Step("ScheduleNew", "REQ-HARDC-TRAP", "2026-01-15T12:00Z"),
+        Step("InspectParticipant", "CEO"),
+        Step("ScheduleNew", "REQ-URGENT-DAY1", "2026-01-15T15:00Z"),
+        Step("ScheduleNew", "REQ-HARDC-DECISION-RECOVERY", "2026-01-15T17:00Z"),
         Step("SubmitFinalCalendar"),
     ]),
 ]

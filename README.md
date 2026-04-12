@@ -16,11 +16,11 @@ tags:
 
 # Meeting Negotiator V1 Environment
 
-**The only calendar scheduling environment where agents must manage priority cascades, partial observability, and dynamically injected follow-up requests — not just pick an open slot.**
+**A calendar scheduling environment where agents must manage priority cascades, protected-event escalations, partial observability, and recovery work — not just pick an open slot.**
 
-An OpenEnv RL environment that simulates the full EA/ops scheduling lifecycle: coordinate meetings across four timezones, navigate priority-driven bump chains, handle emergency follow-ups injected mid-episode, and submit a conflict-free calendar that respects every participant's working hours and preferences.
+An OpenEnv RL environment that simulates the full EA/ops scheduling lifecycle: coordinate meetings across four timezones, navigate priority-driven bump chains, handle protected-event recovery requests and hard-tier mid-episode pressure, and submit a conflict-free calendar that respects every participant's working hours and preferences.
 
-9 real-world scheduling scenarios across 3 difficulty tiers. 8 action types. Partial observability on HARD (preferred hours hidden until explicitly investigated). 64K+ unique instances per scenario via seed-based randomization. Decomposed 7-component reward with per-step transparency.
+9 real-world scheduling scenarios across 3 difficulty tiers. 8 action types. Partial observability on HARD (preferred hours hidden until explicitly investigated). 64K+ unique instances per scenario via seed-based randomization. Decomposed terminal reward with stability penalties and recovery credit.
 
 Fully deterministic reward. Zero LLM calls at runtime.
 
@@ -28,17 +28,17 @@ Fully deterministic reward. Zero LLM calls at runtime.
 
 ## What makes this environment unique
 
-1. **Real scheduling patterns from ops practice.** Scenarios are drawn from situations that actually happen: exec-heavy urgent syncs where the only available slot requires a 3-step bump chain, IST participants whose overlapping working-hour window is just 90 minutes wide, dynamic follow-up requests arriving mid-episode after an initial triage call.
+1. **Real scheduling patterns from ops practice.** Scenarios are drawn from situations that actually happen: exec-heavy urgent syncs where the only available slot requires a protected-event cascade, IST participants whose overlapping working-hour window is just 90 minutes wide, and reschedule decisions that create explicit recovery work.
 
 2. **Priority-driven bump mechanics.** Higher-priority meetings can displace lower-priority ones, which automatically re-enters the bumped event into the pending queue. The agent must track the cascade and re-slot bumped events before their deadlines. Wrong bump order causes unresolvable downstream conflicts.
 
 3. **Partial observability on HARD.** Participant preferred hours are hidden until the agent explicitly calls `InspectParticipant`. Acting without investigating incurs avoidable preference penalties. The optimal strategy is to inspect before scheduling — exactly what a competent EA does.
 
-4. **Dynamic follow-up requests mid-episode.** On MEDIUM and HARD scenarios, additional meeting requests arrive partway through the episode (simulating a manager escalating during a scheduling session). The agent must absorb the new request and re-plan without invalidating already-scheduled events.
+4. **Protected-event escalations and recovery requests.** Disturbing certain structural meetings injects explicit follow-up work (`REQ-MEDB-RECOVERY`, `REQ-MEDC-RECOVERY`, `REQ-HARDB-EXEC-RECOVERY`, `REQ-HARDC-DECISION-RECOVERY`). The agent must absorb the recovery work and re-plan without invalidating already-scheduled events.
 
 5. **8-action investigation / scheduling toolkit.** Beyond schedule/reschedule, the agent can probe conflicts before committing (`ListConflicts`), reveal participant details (`InspectParticipant`), query the scoring policy (`GetPolicy`), and undo the last action (`UndoLastAction`). The action space mirrors a real scheduling assistant's capability set.
 
-6. **Decomposed 7-component reward with per-step transparency.** Every step returns `last_reward_components`. The terminal `reward_breakdown` names exactly which constraints were violated and by how much. An agent — and a developer — can audit every point of every episode.
+6. **Decomposed reward with per-step transparency.** Every step returns `last_reward_components`. The terminal `reward_breakdown` includes completion, deadline, working-hours, preference, conflict, efficiency, investigation, `stability_penalty`, and `recovery_credit`. An agent — and a developer — can audit every point of every episode.
 
 ### Example: `HARD — The Zero-Sum Domino Cascade`
 
@@ -66,19 +66,19 @@ Greedy agents that try to schedule `REQ-URGENT-ALL-HANDS` directly hit a blockin
 
 ## Oracle-Verified Score Bounds
 
-> **Note:** Live model inference baselines are pending Space deployment and will be added here after runs against the hosted endpoint. The table below shows the **oracle upper-bound scores** produced by `scripts/verify_scenarios.py` — the maximum a perfect agent can achieve on each scenario given the known-optimal action sequence. These define the scoring ceiling before preference penalties.
+> **Note:** Live model inference baselines are still limited. The table below shows the current **verified reference-plan scores** from `scripts/verify_scenarios.py` for the repository state on disk. These are known-good baseline plans, not formal optimality proofs.
 
 | Scenario | Tier | Oracle Score | Unavoidable Penalty | Notes |
 |---|---|---|---|---|
 | `EASY` — The Empty Slate | easy | **0.989** | — | UTC participants, shared prefs. Near-perfect achievable. |
 | `EASY_B` — The Timezone Overlap | easy | **0.883** | −0.10 pref | EST/PST overlap window is outside both preferred hours. |
 | `EASY_C` — The Lunch Break Gap | easy | **0.917** | −0.07 pref | IST-offset constraint; preferred window narrowly satisfied. |
-| `MEDIUM` — The Greedy Preference Trap | medium | **0.807** | −0.15 comp. | Only 2/3 requests fully in preferred range. Greedy path: ~0.65. |
-| `MEDIUM_B` — The Blocker Sandwich | medium | **≥0.75** | — | Pre-block gap 09:00–14:00Z. Greedy agents try 14:00Z and fail. |
-| `MEDIUM_C` — The Bump Chain | medium | **0.952** | — | Bumped event re-slotted cleanly. Near-perfect if bump handled. |
-| `HARD` — The Zero-Sum Domino Cascade | hard | **0.799** | −0.20 pref | Inspect-first path recovers most preference penalty. |
-| `HARD_B` — The VIP No-Bump Gridlock | hard | **0.690** | −0.175 comp. | CEO+Alice routing around blockers leaves partial completion. |
-| `HARD_C` — The Decoy Trap | hard | **0.792** | −0.05 pref | Inspect Dev before acting avoids the decoy trap. |
+| `MEDIUM` — The Greedy Preference Trap | medium | **0.948** | −0.04 pref. | Best path is `REQ-MED-2 @ 16:00Z` then `REQ-MED-1 @ 17:00Z`; greedy ordering burns the better handoff slot. |
+| `MEDIUM_B` — The Blocker Sandwich | medium | **0.923** | stability −0.02 | Day-2 placement at `14:00Z` displaces a protected placeholder and requires explicit recovery work. |
+| `MEDIUM_C` — The Bump Chain | medium | **0.935** | stability −0.02 | Urgent placement bumps Bob's low event and spawns a recovery task that must be cleared. |
+| `HARD` — The Zero-Sum Domino Cascade | hard | **0.504** | large pref/coverage loss | Current hard path is intentionally partial-credit and demands backward planning through a dense cascade. |
+| `HARD_B` — The 60-Minute VIP Bottleneck | hard | **0.878** | stability −0.02 | Urgent 3-way sync now bumps the protected CEO block, creating both a bumped replacement request and an executive recovery sync. |
+| `HARD_C` — The 48-Hour Blind Cascade | hard | **0.655** | stability −0.02 | The protected trap block can be displaced only by accepting recovery work on the same day. |
 
 **To run the oracle audit locally:**
 ```bash
@@ -128,8 +128,8 @@ async with MeetingNegotiatorV1Env(base_url="https://your-space.hf.space") as env
 
     # 4. Submit when all requests are scheduled
     final = await env.step(MeetingNegotiatorV1Action(command="SubmitFinalCalendar"))
-    print(f"Score: {final.observation.score}")
-    print(f"Breakdown: {final.observation.reward_breakdown}")
+    print(f"Score: {final.score}")
+    print(f"Breakdown: {final.reward_breakdown}")
 ```
 
 ---
@@ -141,7 +141,7 @@ async with MeetingNegotiatorV1Env(base_url="https://your-space.hf.space") as env
 | `CheckAvailability` | `target_id`, `proposed_start_utc` | Probe a slot without committing. Returns constraint violations and preference notes. |
 | `ScheduleNew` | `target_id`, `proposed_start_utc` | Schedule a pending request. Auto-bumps lower-priority conflicts. |
 | `RescheduleExisting` | `target_id`, `proposed_start_utc` | Move an already-scheduled event. Auto-bumps lower-priority conflicts. |
-| `SubmitFinalCalendar` | — | Finalize and score the episode. Triggers 7-component reward computation. |
+| `SubmitFinalCalendar` | — | Finalize and score the episode. Triggers the terminal reward computation with stability and recovery terms. |
 | `InspectParticipant` | `target_id` | Reveal participant details including hidden preferred hours (costs investigation budget). |
 | `ListConflicts` | `target_id`, `proposed_start_utc` | List all conflicting events at a proposed slot with bumpability tags. |
 | `GetPolicy` | — | Print the full scoring policy and per-step penalty/bonus table. |
@@ -166,10 +166,10 @@ class MeetingNegotiatorV1Observation(BaseModel):
     reward: float                                  # Cumulative step reward
     done: bool
     last_reward_components: Dict[str, float]       # Per-step reward decomposition
-    reward_breakdown: Optional[Dict[str, float]]   # Terminal 7-component breakdown
+    reward_breakdown: Optional[Dict[str, float]]   # Terminal reward breakdown incl. stability/recovery
     available_commands: List[str]                  # Valid commands this step
     investigation_budget_remaining: int            # Remaining InspectParticipant budget
-    total_requests_seen: int                       # Includes dynamically injected requests
+    total_requests_seen: int                       # Includes triggered recovery follow-ups
     requests_completed: int
 ```
 
@@ -177,7 +177,7 @@ class MeetingNegotiatorV1Observation(BaseModel):
 
 ## Reward Function
 
-### 7 components (max = 1.00, clamped to [0.01, 0.99])
+### Base components + stability/recovery adjustments (clamped to [0.01, 0.99])
 
 | # | Component | Weight | What it measures |
 |---|-----------|--------|-----------------|
@@ -187,7 +187,9 @@ class MeetingNegotiatorV1Observation(BaseModel):
 | 4 | Preference Quality | 0.10 | Fraction of meetings within preferred hours |
 | 5 | Conflict Avoidance | 0.10 | Penalizes double-bookings in final calendar |
 | 6 | Efficiency | 0.05 | `optimal_steps / actual_turns`, scaled by completion |
-| 7 | Investigation Discipline | 0.05 | Fraction of HARD participants inspected before scheduling (HARD only) |
+| 7 | Investigation Discipline | 0.05 | Fraction of key HARD participants inspected before or during the scheduling chain |
+| 8 | Stability Penalty | variable | Harmful transitions after disturbing protected meetings |
+| 9 | Recovery Credit | variable | Credit for resolving recovery work spawned by cascades |
 
 **Per-step penalties** (dense reward during episode):
 
@@ -231,21 +233,21 @@ Each scenario supports `reset(seed=N)`. Surface features (participant names, mee
 | `EASY_B` | The Timezone Overlap | EST/PST participants with non-overlapping preferred windows. Agent must find the UTC intersection window. | 0.95 |
 | `EASY_C` | The Lunch Break Gap | 3-party meeting with IST participant. Working hours cross the Alice/Bob lunch gap. IST offset = 5.5h. | 0.95 |
 
-### Medium (3 scenarios) — multi-request, preference traps, dynamic followups
+### Medium (3 scenarios) — multi-request, preference traps, protected recovery work
 
 | ID | Name | Catch | Max Score |
 |---|---|---|---|
-| `MEDIUM` | The Greedy Preference Trap | Priya has a 7-hour morning blocker. Greedy first-slot scheduling incurs preference penalties. Dynamic follow-up injected at step 6. | 0.90 |
-| `MEDIUM_B` | The Blocker Sandwich | Urgent 3-party meeting must fit between two blockers (high + medium priority). `ListConflicts` is essential. | 0.88 |
-| `MEDIUM_C` | The Bump Chain | Urgent meeting must displace low-priority Bob event, then bumped event must be re-slotted before 17:00 deadline. | 0.88 |
+| `MEDIUM` | The Greedy Preference Trap | Two-request ordering puzzle: `REQ-MED-2 @ 16:00Z` and `REQ-MED-1 @ 17:00Z` is the good path; greedy first-slot ordering loses preference quality. | 0.95 |
+| `MEDIUM_B` | The Blocker Sandwich | Urgent 3-party meeting only works on day 2 by displacing a protected hold and then resolving explicit recovery work. | 0.93 |
+| `MEDIUM_C` | The Bump Chain | Urgent meeting displaces Bob's low-priority event and also creates a separate recovery obligation that must be scheduled. | 0.94 |
 
-### Hard (3 scenarios) — partial observability, cascades, traps, dynamic followups
+### Hard (3 scenarios) — partial observability, protected cascades, recovery chains
 
 | ID | Name | Catch | Max Score |
 |---|---|---|---|
-| `HARD` | The Zero-Sum Domino Cascade | 5-step backward-planned cascade across 3 priority levels. Emergency debrief injected mid-episode. Preferred hours hidden. | 0.80 |
-| `HARD_B` | The VIP No-Bump Gridlock | CEO has a 3-hour unbumpable VIP block. Agent must route around both CEO and Alice's blockers. Preferred hours hidden. | 0.80 |
-| `HARD_C` | The Decoy Trap | Low-priority decoy event at 15:00 can be bumped, but doing so blocks the critical urgent slot for Dev. Must inspect Dev before acting. | 0.78 |
+| `HARD` | The Zero-Sum Domino Cascade | Backward-planned cascade across 3 priority levels with hidden preferences and narrow partial-credit margins. | 0.51 |
+| `HARD_B` | The 60-Minute VIP Bottleneck | `REQ-HARDB-ALL @ 17:00Z` can displace the protected CEO block, but that creates both a bumped replacement request and an executive recovery sync. | 0.88 |
+| `HARD_C` | The 48-Hour Blind Cascade | Day-1 urgent board prep only fits by displacing a protected trap block, which forces same-day recovery work under hidden preference pressure. | 0.66 |
 
 ---
 
@@ -289,14 +291,14 @@ Inference output follows the Hackathon Phase 2 structured format:
 
 ## Architecture
 
-- **Environment server**: FastAPI with WebSocket session isolation, max concurrent sessions unbounded
+- **Environment server**: FastAPI with WebSocket session isolation, `max_concurrent_envs=1` in the current app config
 - **Action engine**: 8-command handler with constraint evaluation, priority-ordered bump mechanics, undo stack
 - **Scenarios**: 9 hardened scheduling puzzles (3 per tier), all in `server/scenarios.py`
 - **Randomization**: Seed-based name/title/deadline substitution in `server/scenario_resolver.py`
-- **Reward**: 7-component decomposed, fully deterministic, in `server/reward.py`
+- **Reward**: decomposed deterministic scorer with stability/recovery terms, in `server/reward.py`
 - **Graders**: Per-tier `grade_easy/medium/hard` in `server/graders.py`, referenced in `openenv.yaml`
 - **Client**: `MeetingNegotiatorV1Env` (async WebSocket)
-- **Tests**: 46 pytest tests across 5 modules — lifecycle, reward, timezone, graders, randomization
+- **Tests**: 52 pytest tests across lifecycle, reward, timezone, graders, and randomization coverage
 
 ## Project Structure
 
@@ -308,7 +310,7 @@ meeting_negotiator_v1/
 ├── models.py                 # Pydantic models: Action, Observation, State
 ├── tests/
 │   ├── test_env_lifecycle.py # Reset, step, new actions, observability, followups
-│   ├── test_reward.py        # 7-component scoring
+│   ├── test_reward.py        # terminal scoring + stability/recovery checks
 │   ├── test_timezone.py      # IST, cross-midnight, block boundary
 │   ├── test_graders.py       # grade_easy/medium/hard determinism
 │   └── test_randomization.py # Seed determinism, structural invariance
@@ -317,6 +319,6 @@ meeting_negotiator_v1/
     ├── meeting_negotiator_v1_environment.py  # Core engine (action handlers)
     ├── scenarios.py                  # 9 scenario definitions + registry
     ├── scenario_resolver.py          # Seed-based anti-memorization
-    ├── reward.py                     # 7-component decomposed reward
+    ├── reward.py                     # decomposed terminal reward
     └── graders.py                    # Per-task grader functions
 ```
