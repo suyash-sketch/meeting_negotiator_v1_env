@@ -209,4 +209,5 @@ class TestOperationalTransitions:
         ))
         pending_ids = {req.request_id for req in obs.pending_requests}
         assert "REQ-HARDC-DECISION-RECOVERY" in pending_ids
+        assert "REQ-BUMP-EVT-TRAP-BUMP" in pending_ids
         assert obs.system_state == "recovery_needed"

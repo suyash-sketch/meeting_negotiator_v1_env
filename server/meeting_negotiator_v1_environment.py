@@ -840,10 +840,21 @@ class MeetingNegotiatorV1Environment(Environment):
                     attendees=["CEO", "Alice"],
                     duration_minutes=30,
                     priority="high",
-                    deadline_utc="2026-01-15T18:00Z",
+                    deadline_utc="2026-01-16T15:30Z",
                     title="Board Decision Recovery",
                 ),
-                "message": "Moving the protected trap block disrupted the board-prep chain; recovery work is now required.",
+                "message": "Moving the protected trap block disrupted the board-prep chain; a narrow next-day decision recovery is now required.",
+            }
+            specs["REQ-BUMP-EVT-TRAP-BUMP"] = {
+                "followup": MeetingRequest(
+                    request_id="REQ-BUMP-EVT-TRAP-BUMP",
+                    attendees=["CEO", "Bob"],
+                    duration_minutes=60,
+                    priority="medium",
+                    deadline_utc="2026-01-15T17:00Z",
+                    title="Displaced CEO-Bob Sync",
+                ),
+                "message": "The bumped CEO/Bob sync must be rebooked before Bob's final afternoon blocker.",
             }
 
         return protected, specs

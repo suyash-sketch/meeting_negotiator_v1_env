@@ -481,10 +481,10 @@ def scenario_hard_c() -> ScenarioSpec:
         "CEO": Participant(
             name="CEO", timezone="UTC", 
             working_hours=["09:00-18:00"], 
-            # THE TRAP: CEO strictly uses mornings for deep work.
-            # If the agent bumps a meeting to Day 2 morning without inspecting, 
-            # the Patience lockout will trigger and ruin the board.
-            preferred_hours=["15:00-18:00"] 
+            # BREAKING THE LUCKY GUESS:
+            # CEO now prefers the morning. If the LLM blindly hugs the 15:30Z deadline 
+            # and schedules at 15:00Z without inspecting, it loses points.
+            preferred_hours=["09:00-11:00"] 
         ),
         "Alice": Participant(
             name="Alice", timezone="UTC", 
@@ -500,38 +500,40 @@ def scenario_hard_c() -> ScenarioSpec:
 
     calendar_state = [
         # === DAY 1 CONSTRAINTS (Jan 15) ===
-        # Alice is completely blocked in the morning. She is ONLY free 15:00Z onwards.
         ScheduledEvent(
             event_id="EVT-ALICE-MORNING", attendees=["Alice"],
             start_time_utc="2026-01-15T09:00Z", duration_minutes=360, priority="high" # Blocks 09:00-15:00
         ),
-        # Bob is also blocked through early afternoon, removing the model's easy
-        # "move the trap to 13:00Z/14:00Z" bypass.
         ScheduledEvent(
-            event_id="EVT-BOB-MIDDAY", attendees=["Bob"],
-            start_time_utc="2026-01-15T13:00Z", duration_minutes=120, priority="high" # Blocks 13:00-15:00
-        ),
-        # Bob is completely blocked in the late afternoon. He is ONLY free before 16:00Z.
-        ScheduledEvent(
-            event_id="EVT-BOB-LATE", attendees=["Bob"],
+            event_id="EVT-ALICE-LATE", attendees=["Alice"],
             start_time_utc="2026-01-15T16:00Z", duration_minutes=120, priority="high" # Blocks 16:00-18:00
         ),
+        ScheduledEvent(
+            event_id="EVT-BOB-MORNING", attendees=["Bob"],
+            start_time_utc="2026-01-15T09:00Z", duration_minutes=360, priority="high" # Blocks 09:00-15:00
+        ),
+        ScheduledEvent(
+            event_id="EVT-BOB-LATE", attendees=["Bob"],
+            start_time_utc="2026-01-15T17:00Z", duration_minutes=60, priority="high" # Blocks 17:00-18:00
+        ),
         
-        # === THE BOTTLENECK ===
-        # Because of Alice and Bob's constraints, they ONLY overlap at exactly 15:00Z.
-        # But 15:00Z is blocked by a medium-priority CEO/Bob meeting.
+        # === THE THIRD DOMINO ===
+        # The agent MUST put the bumped CEO/Bob trap here, which forces it to bump 
+        # Bob's low priority meeting into Day 2, creating a 3-stage cascade.
+        ScheduledEvent(
+            event_id="EVT-BOB-LOW", attendees=["Bob"],
+            start_time_utc="2026-01-15T16:00Z", duration_minutes=60, priority="low",
+            request_id="REQ-BUMPED-BOB-LOW" # CRITICAL: Fixes the 24-hour unrecoverable bug
+        ),
+        
+        # === THE BOTTLENECK TRAP ===
         ScheduledEvent(
             event_id="EVT-TRAP-BUMP", attendees=["CEO", "Bob"],
-            start_time_utc="2026-01-15T15:00Z", duration_minutes=60, priority="medium"
+            start_time_utc="2026-01-15T15:00Z", duration_minutes=60, priority="medium",
+            request_id="REQ-BUMP-EVT-TRAP-BUMP" # CRITICAL: Links the event to your double-escalation mechanic
         ),
 
         # === DAY 2 CONSTRAINTS (Jan 16) ===
-        # Day 2 intentionally has no clean CEO+Bob overlap, so the trap block
-        # cannot be cheaply pushed forward and forgotten.
-        ScheduledEvent(
-            event_id="EVT-CEO-DAY2-MORNING", attendees=["CEO"],
-            start_time_utc="2026-01-16T09:00Z", duration_minutes=120, priority="high" # Blocks 09:00-11:00
-        ),
         ScheduledEvent(
             event_id="EVT-CEO-DAY2-MID", attendees=["CEO"],
             start_time_utc="2026-01-16T11:00Z", duration_minutes=240, priority="high" # Blocks 11:00-15:00
@@ -542,26 +544,31 @@ def scenario_hard_c() -> ScenarioSpec:
         ),
     ]
 
-    # The agent MUST schedule a 3-way meeting on Day 1.
-    # Mathematical reality: It CAN ONLY fit at 15:00Z.
     req_urgent_day1 = MeetingRequest(
         request_id="REQ-URGENT-DAY1", attendees=["CEO", "Alice", "Bob"],
         duration_minutes=60, priority="urgent", 
-        deadline_utc="2026-01-15T18:00Z", # MUST happen today
+        deadline_utc="2026-01-15T18:00Z", 
         title="Critical Board Prep"
+    )
+    
+    # === PREVENTING THE 24-HOUR BUG ===
+    req_bumped_bob = MeetingRequest(
+        request_id="REQ-BUMPED-BOB-LOW", attendees=["Bob"],
+        duration_minutes=60, priority="low", 
+        deadline_utc="2026-01-16T18:00Z", # Gives the agent until the end of Day 2 to recover it
+        title="Bob Async Work"
     )
 
     return ScenarioSpec(
         scenario_id="HARD_C",
-        description="The 48-Hour Blind Cascade",
+        description="The Triple Threat Cascade",
         current_time_utc="2026-01-15T08:00Z",
         participants=participants,
         calendar_state=calendar_state,
         pending_requests=[req_urgent_day1],
-        all_requests=[req_urgent_day1],
+        all_requests=[req_urgent_day1, req_bumped_bob], # CRITICAL: Added the 3rd domino request here
         max_turns=12,
     )
-
 
 # ── Registry ───────────────────────────────────────────────────────────
 

@@ -153,14 +153,17 @@ ORACLE_PLANS: List[Tuple[str, float, List[Step]]] = [
         Step("SubmitFinalCalendar"),
     ]),
 
-    # ── HARD_C: The 48-Hour Blind Cascade ───────────────────────────────
-    # Current hard scenario has one urgent three-way meeting on day 1. It only
-    # fits at 15:00Z by displacing the protected trap block, which then creates
-    # an explicit board-recovery sync that should be cleared before submission.
-    ("HARD_C", 0.55, [
+    # ── HARD_C: The Triple Threat Cascade ───────────────────────────────
+    # Day-1 urgent board prep only fits at 15:00Z. That bumps the protected
+    # CEO/Bob trap block, which must be rebooked at 16:00Z and in turn bumps
+    # Bob's low-priority work into day 2. Best-known path inspects CEO so the
+    # final CEO/Alice recovery lands in CEO's preferred morning window.
+    ("HARD_C", 0.88, [
         Step("InspectParticipant", "CEO"),
         Step("ScheduleNew", "REQ-URGENT-DAY1", "2026-01-15T15:00Z"),
-        Step("ScheduleNew", "REQ-HARDC-DECISION-RECOVERY", "2026-01-15T17:00Z"),
+        Step("ScheduleNew", "REQ-BUMP-EVT-TRAP-BUMP", "2026-01-15T16:00Z"),
+        Step("ScheduleNew", "REQ-BUMPED-BOB-LOW", "2026-01-16T09:00Z"),
+        Step("ScheduleNew", "REQ-HARDC-DECISION-RECOVERY", "2026-01-16T09:00Z"),
         Step("SubmitFinalCalendar"),
     ]),
 ]
