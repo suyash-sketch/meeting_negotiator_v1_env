@@ -78,7 +78,7 @@ Greedy agents that try to schedule `REQ-URGENT-ALL-HANDS` directly hit a blockin
 | `MEDIUM_C` — The Bump Chain | medium | **0.935** | stability −0.02 | Urgent placement bumps Bob's low event and spawns a recovery task that must be cleared. |
 | `HARD` — The Zero-Sum Domino Cascade | hard | **0.504** | large pref/coverage loss | Current hard path is intentionally partial-credit and demands backward planning through a dense cascade. |
 | `HARD_B` — The 60-Minute VIP Bottleneck | hard | **0.878** | stability −0.02 | Urgent 3-way sync now bumps the protected CEO block, creating both a bumped replacement request and an executive recovery sync. |
-| `HARD_C` — The 48-Hour Blind Cascade | hard | **0.655** | stability −0.02 | The protected trap block can be displaced only by accepting recovery work on the same day. |
+| `HARD_C` — The Triple Threat Cascade | hard | **0.885** | stability −0.04 | Day-1 trap bump forces same-day CEO/Bob recovery, which then bumps Bob low into day 2; inspecting CEO lets recovery land at 09:00Z for extra preference credit. |
 
 **To run the oracle audit locally:**
 ```bash
@@ -247,7 +247,7 @@ Each scenario supports `reset(seed=N)`. Surface features (participant names, mee
 |---|---|---|---|
 | `HARD` | The Zero-Sum Domino Cascade | Backward-planned cascade across 3 priority levels with hidden preferences and narrow partial-credit margins. | 0.51 |
 | `HARD_B` | The 60-Minute VIP Bottleneck | `REQ-HARDB-ALL @ 17:00Z` can displace the protected CEO block, but that creates both a bumped replacement request and an executive recovery sync. | 0.88 |
-| `HARD_C` | The 48-Hour Blind Cascade | Day-1 urgent board prep only fits by displacing a protected trap block, which forces same-day recovery work under hidden preference pressure. | 0.66 |
+| `HARD_C` | The Triple Threat Cascade | Day-1 urgent board prep only fits at 15:00Z, forcing a 3-stage cascade: rebook CEO/Bob trap at 16:00Z, recover Bob's bumped low task on day 2, then place CEO/Alice recovery in CEO's preferred morning window. | 0.89 |
 
 ---
 
