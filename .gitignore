@@ -3,3 +3,5 @@ __pycache__
 .venv
 .codex
 .agents
+# Added by code-review-graph
+.code-review-graph/
