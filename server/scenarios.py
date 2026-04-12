@@ -472,7 +472,7 @@ def scenario_hard_b() -> ScenarioSpec:
         calendar_state=calendar_state,
         pending_requests=[req_impossible_greedy, req_decoy],
         all_requests=[req_impossible_greedy, req_decoy],
-        max_turns=15,
+        max_turns=12,
     )
 
 
