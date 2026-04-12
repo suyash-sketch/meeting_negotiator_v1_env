@@ -8,7 +8,7 @@ if _root not in sys.path:
     sys.path.insert(0, _root)
 
 import pytest
-from server.graders import grade_easy, grade_medium, grade_hard
+from server.graders import grade_easy, grade_easy_b, grade_medium, grade_hard
 
 
 def _make_request(req_id="R1", attendees=None, deadline="2026-01-15T17:00Z"):
@@ -34,6 +34,15 @@ class TestGradeEasy:
             participants={"Alice": _make_participant()},
             turn_count=1, max_turns=9)
         assert 0.01 <= score <= 0.99
+
+    def test_easy_b_wrapper_same_as_pinned_scenario(self):
+        kwargs = dict(
+            all_requests=[_make_request()],
+            calendar_state=[_make_event()],
+            participants={"Alice": _make_participant()},
+            turn_count=1, max_turns=9,
+        )
+        assert grade_easy_b(**kwargs) == grade_easy(scenario_id="EASY_B", **kwargs)
 
     def test_no_data_returns_minimum(self):
         score = grade_easy()

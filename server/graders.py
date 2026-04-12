@@ -1,16 +1,17 @@
 """Standalone grader functions for OpenEnv task evaluation.
 
-Three tier graders (`grade_easy`, `grade_medium`, `grade_hard`) referenced from
-`openenv.yaml`. Multiple scenario tasks share the same grader; each call must
-receive episode `scenario_id` (top-level arg or in **kwargs from `state()`)
-so `compute_final_score` applies correct rules (e.g. HARD* investigation).
+Core logic lives in `grade_easy`, `grade_medium`, `grade_hard`. Hugging Face
+Spaces task lists often **dedupe rows by identical `grader:` strings** in
+`openenv.yaml`, so each scenario also exposes a **unique** wrapper
+(`grade_easy_b`, …) for Hub display. Wrappers pin default `scenario_id` for
+that row; state kwargs still override when present.
 
-When `scenario_id` missing (unit tests), defaults: EASY / MEDIUM / HARD.
+When `scenario_id` missing (unit tests), tier graders default EASY / MEDIUM / HARD.
 """
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 try:
     from .reward import compute_final_score
@@ -160,4 +161,161 @@ def grade_hard(
         inspected_participants=inspected_participants,
         scenario_id=sid,
         **rest,
+    )
+
+
+def _pin_scenario(
+    tier_fn: Callable[..., float],
+    pinned: str,
+    all_requests: Any = None,
+    calendar_state: Any = None,
+    participants: Any = None,
+    turn_count: int = 0,
+    max_turns: int = 15,
+    inspected_participants: Optional[List[str]] = None,
+    **kwargs,
+) -> float:
+    rest = dict(kwargs)
+    rest.pop("scenario_id", None)
+    return tier_fn(
+        all_requests=all_requests,
+        calendar_state=calendar_state,
+        participants=participants,
+        turn_count=turn_count,
+        max_turns=max_turns,
+        inspected_participants=inspected_participants,
+        scenario_id=pinned,
+        **rest,
+    )
+
+
+def grade_easy_b(
+    all_requests: Any = None,
+    calendar_state: Any = None,
+    participants: Any = None,
+    turn_count: int = 0,
+    max_turns: int = 15,
+    inspected_participants: Optional[List[str]] = None,
+    **kwargs,
+) -> float:
+    return _pin_scenario(
+        grade_easy,
+        "EASY_B",
+        all_requests,
+        calendar_state,
+        participants,
+        turn_count,
+        max_turns,
+        inspected_participants,
+        **kwargs,
+    )
+
+
+def grade_easy_c(
+    all_requests: Any = None,
+    calendar_state: Any = None,
+    participants: Any = None,
+    turn_count: int = 0,
+    max_turns: int = 15,
+    inspected_participants: Optional[List[str]] = None,
+    **kwargs,
+) -> float:
+    return _pin_scenario(
+        grade_easy,
+        "EASY_C",
+        all_requests,
+        calendar_state,
+        participants,
+        turn_count,
+        max_turns,
+        inspected_participants,
+        **kwargs,
+    )
+
+
+def grade_medium_b(
+    all_requests: Any = None,
+    calendar_state: Any = None,
+    participants: Any = None,
+    turn_count: int = 0,
+    max_turns: int = 15,
+    inspected_participants: Optional[List[str]] = None,
+    **kwargs,
+) -> float:
+    return _pin_scenario(
+        grade_medium,
+        "MEDIUM_B",
+        all_requests,
+        calendar_state,
+        participants,
+        turn_count,
+        max_turns,
+        inspected_participants,
+        **kwargs,
+    )
+
+
+def grade_medium_c(
+    all_requests: Any = None,
+    calendar_state: Any = None,
+    participants: Any = None,
+    turn_count: int = 0,
+    max_turns: int = 15,
+    inspected_participants: Optional[List[str]] = None,
+    **kwargs,
+) -> float:
+    return _pin_scenario(
+        grade_medium,
+        "MEDIUM_C",
+        all_requests,
+        calendar_state,
+        participants,
+        turn_count,
+        max_turns,
+        inspected_participants,
+        **kwargs,
+    )
+
+
+def grade_hard_b(
+    all_requests: Any = None,
+    calendar_state: Any = None,
+    participants: Any = None,
+    turn_count: int = 0,
+    max_turns: int = 15,
+    inspected_participants: Optional[List[str]] = None,
+    **kwargs,
+) -> float:
+    return _pin_scenario(
+        grade_hard,
+        "HARD_B",
+        all_requests,
+        calendar_state,
+        participants,
+        turn_count,
+        max_turns,
+        inspected_participants,
+        **kwargs,
+    )
+
+
+def grade_hard_c(
+    all_requests: Any = None,
+    calendar_state: Any = None,
+    participants: Any = None,
+    turn_count: int = 0,
+    max_turns: int = 15,
+    inspected_participants: Optional[List[str]] = None,
+    **kwargs,
+) -> float:
+    return _pin_scenario(
+        grade_hard,
+        "HARD_C",
+        all_requests,
+        calendar_state,
+        participants,
+        turn_count,
+        max_turns,
+        inspected_participants,
+        **kwargs,
     )

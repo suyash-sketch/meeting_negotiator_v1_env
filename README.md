@@ -301,7 +301,7 @@ Inference output follows the Hackathon Phase 2 structured format:
 - **Scenarios**: 9 hardened scheduling puzzles (3 per tier), all in `server/scenarios.py`
 - **Randomization**: Seed-based name/title/deadline substitution in `server/scenario_resolver.py`
 - **Reward**: decomposed deterministic scorer with stability/recovery terms, in `server/reward.py`
-- **Graders**: Per-tier `grade_easy/medium/hard` in `server/graders.py`, referenced in `openenv.yaml`
+- **Graders**: Tier scorers `grade_easy/medium/hard` plus thin `grade_easy_b`, `grade_hard_c`, etc., so each `openenv.yaml` task has a **unique** `grader:` import path. Hugging Face Spaces often **collapses tasks that share the same `grader:` string**, which previously hid six of nine scenarios.
 - **Client**: `MeetingNegotiatorV1Env` (async WebSocket)
 - **Tests**: 52 pytest tests across lifecycle, reward, timezone, graders, and randomization coverage
 
