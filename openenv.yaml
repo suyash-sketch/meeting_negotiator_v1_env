@@ -4,8 +4,8 @@ version: 1.0.0
 description: >
   Multi-step calendar negotiation RL environment — agents must schedule meetings
   across timezones, manage priority bumps, respect deadlines and preferences,
-  and handle dynamic follow-up requests. 9 scenarios across 3 difficulty tiers
-  with seed-based anti-memorization randomization.
+  and handle protected-event escalations and recovery requests. 9 scenarios
+  across 3 difficulty tiers with seed-based anti-memorization randomization.
 type: space
 runtime: fastapi
 app: server.app:app
@@ -22,8 +22,8 @@ tasks:
     description: "Basic scheduling with simple working hour constraints. Scenarios: EASY, EASY_B, EASY_C."
     grader: server.graders.grade_easy
   - id: "MEDIUM"
-    description: "Multi-timezone coordination with preference traps and dynamic follow-ups. Scenarios: MEDIUM, MEDIUM_B, MEDIUM_C."
+    description: "Multi-timezone coordination with preference traps and recovery mechanics. Scenarios: MEDIUM, MEDIUM_B, MEDIUM_C."
     grader: server.graders.grade_medium
   - id: "HARD"
-    description: "Priority cascades, bump chains, partial observability, trap actions, and emergency follow-ups. Scenarios: HARD, HARD_B, HARD_C."
+    description: "Priority cascades, protected-event escalations, partial observability, trap actions, and recovery chains. Scenarios: HARD, HARD_B, HARD_C."
     grader: server.graders.grade_hard
